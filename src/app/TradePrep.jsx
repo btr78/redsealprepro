@@ -347,7 +347,7 @@ export default function TradePrep() {
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ priceId: "price_1TZIuTLAAbhDMGQzifBPjrHm" }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (data.url) {

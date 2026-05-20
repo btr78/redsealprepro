@@ -7,7 +7,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
     }
 
-    const { priceId, successUrl, cancelUrl } = await req.json();
+    const { successUrl, cancelUrl } = await req.json();
+    const priceId = process.env.STRIPE_PRICE_ID;
+    if (!priceId) {
+      return NextResponse.json({ error: "Price not configured" }, { status: 500 });
+    }
 
     const params = new URLSearchParams({
       "mode": "subscription",
