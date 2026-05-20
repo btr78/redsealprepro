@@ -214,6 +214,9 @@ const T = {
 export default function TradePrep() {
   const [page, setPage] = useState("landing");
   const [sub, setSub] = useState(false); // subscribed
+  const [checkingOut, setCheckingOut] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const [trade, setTrade] = useState(null);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
@@ -289,6 +292,16 @@ export default function TradePrep() {
         const r = { value: localStorage.getItem("tp-sub") };
         if (r?.value === "true") setSub(true);
       } catch(e) {}
+      // Activate sub when Stripe redirects back with ?sub=success
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("sub") === "success") {
+          setSub(true);
+          localStorage.setItem("tp-sub", "true");
+          window.history.replaceState({}, "", window.location.pathname);
+          setPage("trades");
+        }
+      } catch(e) {}
     })();
   }, []);
 
@@ -316,6 +329,28 @@ export default function TradePrep() {
 
   // Scroll chat
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages]);
+
+  // ─── STRIPE CHECKOUT ────────────────────────────────────────
+  const handleCheckout = async () => {
+    setCheckingOut(true);
+    try {
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceId: "price_1TZFIELAAbhDMGQzvRTcHX3w" }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        alert("Payment setup failed. Please try again.");
+        setCheckingOut(false);
+      }
+    } catch {
+      alert("Network error. Please check your connection and try again.");
+      setCheckingOut(false);
+    }
+  };
 
   // ─── TRADE-AWARE HELPERS ────────────────────────────────────
   const getQuestions = () => {
@@ -535,7 +570,7 @@ export default function TradePrep() {
                 <span style={{ color: T.accent }}>✓</span> {f}
               </div>
             ))}
-            <button onClick={() => { setSub(true); localStorage.setItem("tp-sub","true"); setPage("trades"); }} style={{ ...btn(true), marginTop: 20 }}>Start 7-Day Free Trial →</button>
+            <button onClick={handleCheckout} disabled={checkingOut} style={{ ...btn(true), marginTop: 20, opacity: checkingOut ? 0.7 : 1 }}>{checkingOut ? "Redirecting to Stripe…" : "Start 7-Day Free Trial →"}</button>
           </div>
         </div>
       </div>
@@ -561,10 +596,59 @@ export default function TradePrep() {
             RedSeal Prep is an independent study tool and is not affiliated with, endorsed by, or sponsored by the Canadian Council of Directors of Apprenticeship (CCDA), the Red Seal Program, or any provincial/territorial apprenticeship authority. &quot;Red Seal&quot; refers to the Interprovincial Standards Red Seal Program. All practice questions are original content created for exam preparation purposes.
           </p>
           <p style={{ fontSize: 10, color: "rgba(139,148,158,0.5)" }}>
-            © {new Date().getFullYear()} RedSeal Prep. All rights reserved. &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Terms</span> &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Privacy</span>
+            © {new Date().getFullYear()} RedSeal Prep. All rights reserved. &nbsp;|&nbsp; <span style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => setShowTerms(true)}>Terms</span> &nbsp;|&nbsp; <span style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => setShowPrivacy(true)}>Privacy</span>
           </p>
         </div>
       </div>
+
+      {/* TERMS MODAL */}
+      {showTerms && (
+        <div onClick={() => setShowTerms(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 32, maxWidth: 600, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ fontSize: 20, fontWeight: 800 }}>Terms of Service</h2>
+              <button onClick={() => setShowTerms(false)} style={{ background: "none", border: "none", color: T.text2, cursor: "pointer", fontSize: 22, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, color: T.text2, lineHeight: 1.8 }}>
+              <p style={{ marginBottom: 12 }}><strong style={{ color: T.text }}>Last updated:</strong> {new Date().getFullYear()}</p>
+              <p style={{ marginBottom: 12 }}>By using RedSeal Prep, you agree to these terms. RedSeal Prep is an independent study tool not affiliated with any government apprenticeship body.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Subscription</strong></p>
+              <p style={{ marginBottom: 12 }}>Pro subscriptions are billed at $12 CAD/month after a 7-day free trial. Cancel anytime before the trial ends to avoid charges. No refunds are issued for partial billing periods.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Content</strong></p>
+              <p style={{ marginBottom: 12 }}>All practice questions are original content created for exam preparation. RedSeal Prep does not guarantee passing any official exam. Results depend on individual study effort.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Acceptable Use</strong></p>
+              <p style={{ marginBottom: 12 }}>You may not share, redistribute, or resell access to RedSeal Prep content. One subscription per user.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Contact</strong></p>
+              <p>For billing issues or questions, email <a href="mailto:btsrana@gmail.com" style={{ color: T.accent }}>btsrana@gmail.com</a></p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRIVACY MODAL */}
+      {showPrivacy && (
+        <div onClick={() => setShowPrivacy(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 32, maxWidth: 600, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ fontSize: 20, fontWeight: 800 }}>Privacy Policy</h2>
+              <button onClick={() => setShowPrivacy(false)} style={{ background: "none", border: "none", color: T.text2, cursor: "pointer", fontSize: 22, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, color: T.text2, lineHeight: 1.8 }}>
+              <p style={{ marginBottom: 12 }}><strong style={{ color: T.text }}>Last updated:</strong> {new Date().getFullYear()}</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Data We Collect</strong></p>
+              <p style={{ marginBottom: 12 }}>We collect your email address when you subscribe, processed by Stripe. Quiz progress and scores are stored locally in your browser (localStorage) and are not transmitted to our servers.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Stripe Payments</strong></p>
+              <p style={{ marginBottom: 12 }}>Payment processing is handled by Stripe. We never see or store your card details. Stripe's privacy policy applies to payment data: <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer" style={{ color: T.accent }}>stripe.com/privacy</a></p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>AI Tutor</strong></p>
+              <p style={{ marginBottom: 12 }}>Questions you ask the AI Tutor are sent to an AI API for responses. Do not include personal information in your questions.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Cookies</strong></p>
+              <p style={{ marginBottom: 12 }}>We use browser localStorage (not cookies) to save your progress. No tracking cookies or third-party analytics are used.</p>
+              <p style={{ marginBottom: 8 }}><strong style={{ color: T.text }}>Contact</strong></p>
+              <p>Privacy questions: <a href="mailto:btsrana@gmail.com" style={{ color: T.accent }}>btsrana@gmail.com</a></p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
