@@ -8,10 +8,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { successUrl, cancelUrl } = await req.json();
-    const priceId = process.env.STRIPE_PRICE_ID;
-    if (!priceId) {
-      return NextResponse.json({ error: "Price not configured" }, { status: 500 });
-    }
+    const priceId = process.env.STRIPE_PRICE_ID || "price_1TZJu5B7Y7kqYPm0pPbU6waR";
 
     const params = new URLSearchParams({
       "mode": "subscription",
