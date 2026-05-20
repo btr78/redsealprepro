@@ -221,6 +221,7 @@ export default function TradePrep() {
   const [restoreEmail, setRestoreEmail] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [restoreMsg, setRestoreMsg] = useState(null);
+  const [showWrong, setShowWrong] = useState(false);
   const [trade, setTrade] = useState(null);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
@@ -494,7 +495,7 @@ export default function TradePrep() {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMsgs, questionContext })
+        body: JSON.stringify({ messages: newMsgs, questionContext, tradeId: trade?.id })
       });
       const data = await resp.json();
       const aiText = data.text || "I couldn't process that. Try again.";
@@ -836,7 +837,7 @@ export default function TradePrep() {
                   <div style={{ textAlign: "center", padding: "40px 20px", color: T.text2 }}>
                     <div style={{ fontSize: 40, marginBottom: 12 }}>🤖</div>
                     <div style={{ fontWeight: 700, fontSize: 16, color: T.text, marginBottom: 8 }}>Ask Me Anything</div>
-                    <div style={{ fontSize: 13, lineHeight: 1.6 }}>I'm your Red Seal 433A exam tutor. Ask about hydraulics, alignment, rigging, gear ratios — anything on the exam.</div>
+                    <div style={{ fontSize: 13, lineHeight: 1.6 }}>I'm your Red Seal {trade?.id || "433A"} exam tutor. Ask me anything about your exam topics.</div>
                   </div>
                 )}
                 {chat.messages.map((m, i) => (
@@ -987,7 +988,6 @@ export default function TradePrep() {
   if (page === "results" && quiz) {
     const pct = Math.round((quiz.score / quiz.questions.length) * 100);
     const passed = pct >= 70;
-    const [showWrong, setShowWrong] = useState(false);
 
     const catBreak = getCategories().map(cat => {
       const qs = quiz.answers.filter(a => quiz.questions.find(q => q.id === a.qId)?.cat === cat.id);
