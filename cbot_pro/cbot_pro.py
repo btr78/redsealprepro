@@ -2127,7 +2127,6 @@ class MessageFormatter:
         # Simple, clean message format
         lines = [
             f"{signal.signal_type.emoji} {signal.signal_type.label}: {clean_ticker}",
-            f"━━━━━━━━━━━━━━━━━━━━━",
             f"💰 Price: ${signal.price:.6f}",
             f"📊 {factors_met} of 21 factors met",
             f"📈 Score: {signal.score:.0f}/100",
@@ -2142,7 +2141,6 @@ class MessageFormatter:
             f"  T3: ${signal.targets['target3']:.6f}",
             f"🛑 Stop Loss: ${signal.stop_loss:.6f}",
             f"📈 Risk/Reward: 1:{signal.risk_reward:.1f}",
-            "━━━━━━━━━━━━━━━━━━━━━",
             f"🤖 CBot | {signal.timestamp.strftime('%H:%M:%S UTC')}"
         ]
 
@@ -2173,9 +2171,7 @@ class MessageFormatter:
         if not week_signals:
             return (
                 "📊 CBOT WEEKLY REPORT\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
                 "No signals fired this week.\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🤖 CBot | {now.strftime('%Y-%m-%d %H:%M')}"
             )
 
@@ -2244,7 +2240,6 @@ class MessageFormatter:
 
         lines = [
             "📊 CBOT WEEKLY REPORT",
-            "━━━━━━━━━━━━━━━━━━━━━",
             f"📅 {week_ago.strftime('%b %d')} - {now.strftime('%b %d, %Y')}",
             "",
             f"📈 Total Signals: {len(week_signals)}",
@@ -2308,7 +2303,6 @@ class MessageFormatter:
         lines.extend([
             "",
             f"📊 All Time: {stats.get('total_signals', 0)} signals",
-            "━━━━━━━━━━━━━━━━━━━━━",
             f"🤖 CBot Pro v5.0 | {now.strftime('%Y-%m-%d %H:%M')}"
         ])
 

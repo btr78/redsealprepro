@@ -28,9 +28,7 @@ import atexit
 load_dotenv()
 ET = pytz.timezone('America/New_York')
 
-# ─────────────────────────────────────────────────────────────────
 # LOCK — prevent duplicate instances
-# ─────────────────────────────────────────────────────────────────
 _LOCK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sniper.lock")
 
 def _acquire_lock():
@@ -60,9 +58,7 @@ def _release_lock():
 _acquire_lock()
 atexit.register(_release_lock)
 
-# ─────────────────────────────────────────────────────────────────
 # CONFIGURATION
-# ─────────────────────────────────────────────────────────────────
 BOT_TITLE         = "Options Sniper B🤖T v2.0"
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 ACCOUNT_BALANCE   = 10000.0
@@ -134,9 +130,7 @@ MACD_SIG   = 9
 ADX_PERIOD = 14
 BB_PERIOD  = 20
 
-# ─────────────────────────────────────────────────────────────────
 # LOGGING
-# ─────────────────────────────────────────────────────────────────
 def _strip(t): return re.sub(r'[^\x00-\x7F]+', '', t)
 
 class _SafeFmt(logging.Formatter):
@@ -149,9 +143,7 @@ _ch.setFormatter(_SafeFmt('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_fh, _ch])
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────
 # UTILITIES
-# ─────────────────────────────────────────────────────────────────
 def flatten(df):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -183,9 +175,7 @@ def in_scan_window():
     mt = market_time()
     return any(start <= mt <= end for start, end in SCAN_WINDOWS)
 
-# ─────────────────────────────────────────────────────────────────
 # SETTINGS & TELEGRAM
-# ─────────────────────────────────────────────────────────────────
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -208,9 +198,7 @@ def send_telegram(message, ids):
         except Exception as e:
             log.error(f"Telegram error {chat_id}: {e}")
 
-# ─────────────────────────────────────────────────────────────────
 # TRADE TRACKING
-# ─────────────────────────────────────────────────────────────────
 def load_trades():
     if os.path.exists(TRADES_FILE):
         try:
@@ -307,9 +295,7 @@ def get_overall_stats():
         "pending": data["stats"]["pending"]
     }
 
-# ─────────────────────────────────────────────────────────────────
 # INDICATORS
-# ─────────────────────────────────────────────────────────────────
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain  = delta.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
@@ -366,9 +352,7 @@ def add_indicators(df):
     df['VolMult'] = df['Volume'] / df['VolSMA'].replace(0, np.nan)
     return df
 
-# ─────────────────────────────────────────────────────────────────
 # IV RANK — compare ATM implied vol to 30-day historical vol
-# ─────────────────────────────────────────────────────────────────
 def get_iv_rank(ticker):
     """
     Returns (iv_ratio, label) where iv_ratio = ATM_IV / HV30.
@@ -439,9 +423,7 @@ def get_iv_rank(ticker):
         log.debug(f"IV rank error {ticker}: {e}")
         return 1.0, "UNKNOWN"
 
-# ─────────────────────────────────────────────────────────────────
 # VIX REGIME
-# ─────────────────────────────────────────────────────────────────
 def get_vix():
     try:
         df = download("^VIX", "2d", "1d")
@@ -457,9 +439,7 @@ def vix_regime(vix):
     elif vix < 35: return "HIGH",    -8
     else:          return "EXTREME", -20
 
-# ─────────────────────────────────────────────────────────────────
 # EARNINGS CALENDAR
-# ─────────────────────────────────────────────────────────────────
 def get_earnings_days_away(ticker):
     try:
         cal = yf.Ticker(ticker).calendar
@@ -481,9 +461,7 @@ def get_earnings_days_away(ticker):
     except Exception:
         return None
 
-# ─────────────────────────────────────────────────────────────────
 # PUT/CALL RATIO — institutional sentiment
-# ─────────────────────────────────────────────────────────────────
 def get_pcr(ticker):
     try:
         stock = yf.Ticker(ticker)
@@ -510,9 +488,7 @@ def get_pcr(ticker):
         log.debug(f"PCR error {ticker}: {e}")
     return 1.0, "NEUTRAL", 0
 
-# ─────────────────────────────────────────────────────────────────
 # MAX PAIN
-# ─────────────────────────────────────────────────────────────────
 def get_max_pain(ticker):
     try:
         stock = yf.Ticker(ticker)
@@ -552,9 +528,7 @@ def get_max_pain(ticker):
         log.debug(f"Max pain error {ticker}: {e}")
     return None, None
 
-# ─────────────────────────────────────────────────────────────────
 # SWEEP DETECTION — unusual options activity
-# ─────────────────────────────────────────────────────────────────
 def detect_sweeps(ticker, direction):
     try:
         stock = yf.Ticker(ticker)
@@ -589,9 +563,7 @@ def detect_sweeps(ticker, direction):
         log.debug(f"Sweep error {ticker}: {e}")
     return False, 0
 
-# ─────────────────────────────────────────────────────────────────
 # NEWS SENTIMENT
-# ─────────────────────────────────────────────────────────────────
 BULL_WORDS = ['upgrade','beat','beats','growth','record','bullish','buy','strong',
               'profit','raises','outperform','surge','soar','rally','boost','partnership']
 BEAR_WORDS = ['downgrade','miss','misses','layoff','sec','lawsuit','bearish','sell',
@@ -614,9 +586,7 @@ def get_news_sentiment(ticker):
     except Exception:
         return 0, "NEUTRAL"
 
-# ─────────────────────────────────────────────────────────────────
 # TECHNICAL SCORING — daily + 4h alignment
-# ─────────────────────────────────────────────────────────────────
 def technical_score(ticker):
     """
     Returns (direction, score, details) or (None, 0, {})
@@ -770,9 +740,7 @@ def technical_score(ticker):
         "rsi": rsi, "adx": adx, "vol_mult": vol_m
     }
 
-# ─────────────────────────────────────────────────────────────────
 # OPTION CONTRACT SELECTOR
-# ─────────────────────────────────────────────────────────────────
 def find_best_contract(ticker, direction):
     """
     Find the best contract: target delta ~0.40, DTE 21-45.
@@ -863,9 +831,7 @@ def find_best_contract(ticker, direction):
         log.error(f"find_best_contract error {ticker}: {e}")
     return None
 
-# ─────────────────────────────────────────────────────────────────
 # ACTIVE TRADE MONITOR — check TP / SL / DTE / days held
-# ─────────────────────────────────────────────────────────────────
 def monitor_active_trades(telegram_ids):
     data = load_trades()
     active = [t for t in data["trades"] if t["status"] == "ACTIVE"]
@@ -971,11 +937,9 @@ def _send_exit_alert(trade, telegram_ids, reason, exit_px):
     status  = "WIN 🟢" if pnl_pct > 0 else "LOSS 🔴"
     msg = (
         f"*Options Sniper B🤖T v2.0 — EXIT*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*TICKER:* {trade['ticker']}\n"
         f"*DIRECTION:* {trade['direction']}\n"
         f"*CONTRACT:* {trade.get('contract','?')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*RESULT:* {status}\n"
         f"*EXIT REASON:* {reason}\n"
         f"*ENTRY:* ${trade['entry_option_px']:.2f}\n"
@@ -985,9 +949,7 @@ def _send_exit_alert(trade, telegram_ids, reason, exit_px):
     )
     send_telegram(msg, telegram_ids)
 
-# ─────────────────────────────────────────────────────────────────
 # SIGNAL ALERT FORMATTER
-# ─────────────────────────────────────────────────────────────────
 def format_entry_alert(ticker, direction, score, tech_details, contract, iv_ratio, iv_label,
                         vix, vix_label, pcr, pcr_signal, max_pain, curr_px,
                         sweep, news_score, news_signal, earn_days, strategy):
@@ -1022,16 +984,13 @@ def format_entry_alert(ticker, direction, score, tech_details, contract, iv_rati
 
     msg = (
         f"*Options Sniper B🤖T v2.0*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*TICKER:* {ticker}\n"
         f"*SIGNAL:* {dir_emoji}\n"
         f"*STRATEGY:* {strategy.replace('_',' ')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*SCORE:* {score}/100 — {grade}\n"
         f"*STOCK PRICE:* ${curr_px:.2f}\n"
         f"*STOCK STOP:* ${stop_px:.2f}\n"
         f"*STOCK TARGET:* ${target_px:.2f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*CONTRACT:* {contract['contract']}\n"
         f"*STRIKE:* ${contract['strike']:.2f}\n"
         f"*EXPIRY:* {contract['expiration']} ({contract['dte']}d)\n"
@@ -1039,7 +998,6 @@ def format_entry_alert(ticker, direction, score, tech_details, contract, iv_rati
         f"*BID/ASK:* ${contract['bid']:.2f} / ${contract['ask']:.2f}\n"
         f"*MID PRICE:* ${contract['mid']:.2f} (cost: ${contract['mid']*100:.0f})\n"
         f"*SPREAD:* {contract['spread_pct']:.1f}%\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*IV RATIO:* {iv_emoji} {iv_ratio:.2f}x HV30 [{iv_label}]\n"
         f"*VIX:* {vix:.1f} [{vix_label}]\n"
         f"*PUT/CALL:* {pcr_emoji} {pcr:.2f} [{pcr_signal}]"
@@ -1047,15 +1005,12 @@ def format_entry_alert(ticker, direction, score, tech_details, contract, iv_rati
         f"{sweep_line}"
         f"{news_line}"
         f"{earn_line}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*EXIT RULES:* +50% TP | -30% SL | 21 DTE | 5 days max\n"
         f"_1 contract = ${contract['mid']*100:.0f} cost. Not financial advice._"
     )
     return msg[:4096]
 
-# ─────────────────────────────────────────────────────────────────
 # WEEKLY REPORT
-# ─────────────────────────────────────────────────────────────────
 last_weekly = None
 
 def should_weekly():
@@ -1095,19 +1050,16 @@ def weekly_report():
 
     report = (
         f"*Options Sniper B🤖T v2.0 — WEEKLY REPORT*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*📅 THIS WEEK*\n"
         f"Trades: {len(weekly_done)} | Wins: {w_wins} | Losses: {len(weekly_done)-w_wins}\n"
         f"Win Rate: {w_wr:.1f}%\n"
         f"P&L: {w_emoji} ${w_pnl:+.0f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*{wr_emoji} ALL TIME*\n"
         f"Total: {stats['total']} | Pending: {stats['pending']}\n"
         f"Wins: {stats['wins']} | Losses: {stats['losses']}\n"
         f"Win Rate: {stats['win_rate']:.1f}%\n"
         f"Avg P&L: {stats['avg_pnl_pct']:+.1f}%\n"
         f"Total P&L: ${stats['total_pnl_dol']:+.0f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*📊 BY STRATEGY*\n"
         f"Technical: {tech_wr:.1f}% WR ({len(tech_trades)} trades)\n"
         f"Earnings Vol: {earn_wr:.1f}% WR ({len(earn_trades)} trades)\n"
@@ -1117,9 +1069,7 @@ def weekly_report():
     last_weekly = datetime.now(ET)
     return report[:4096]
 
-# ─────────────────────────────────────────────────────────────────
 # MAIN SCAN
-# ─────────────────────────────────────────────────────────────────
 def run_scan(telegram_ids, vix):
     log.info("=" * 50)
     log.info(f"Running scan — {datetime.now(ET).strftime('%H:%M ET')} | VIX={vix:.1f}")
@@ -1266,9 +1216,7 @@ def run_scan(telegram_ids, vix):
         except Exception as e:
             log.error(f"Scan error {ticker}: {e}")
 
-# ─────────────────────────────────────────────────────────────────
 # TELEGRAM COMMANDS
-# ─────────────────────────────────────────────────────────────────
 last_upd_id = 0
 sniper_paused = False
 _sniper_tg_ids = []
@@ -1478,9 +1426,7 @@ def listen_commands(telegram_ids):
     except Exception as e:
         log.error(f"Command listener error: {e}")
 
-# ─────────────────────────────────────────────────────────────────
 # MAIN
-# ─────────────────────────────────────────────────────────────────
 def main():
     log.info("=" * 60)
     log.info("Options Sniper B🤖T v2.0 — Starting")
@@ -1499,7 +1445,6 @@ def main():
 
     send_telegram(
         f"*Options Sniper B🤖T v2.0 — ONLINE* 🟢\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*Strategy:* IV-filtered directional + pre-earnings vol expansion\n"
         f"*Exit Rules:* +50% TP | -30% SL | 21 DTE | 5 day max\n"
         f"*IV Gate:* Max {IV_RATIO_MAX}x HV30\n"

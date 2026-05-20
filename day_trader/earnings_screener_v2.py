@@ -38,7 +38,6 @@ except ImportError:
 
 load_dotenv()
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 BOT_SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_settings.json")
 STATE_FILE        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "earnings_screener_state.json")
@@ -72,7 +71,6 @@ PEAD_DTE_MAX      = 25    # days to expiry maximum
 SCAN_INTERVAL_S   = 60
 LOOK_AHEAD_DAYS   = 5     # earnings within next N days
 
-# ─── WATCHLIST ───────────────────────────────────────────────────────────────
 WATCHLIST = [
     # Mega-cap tech
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
@@ -95,7 +93,6 @@ WATCHLIST = [
 ]
 WATCHLIST = list(dict.fromkeys(WATCHLIST))
 
-# ─── LOGGING ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -106,7 +103,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("EarningsScreener")
 
-# ─── TELEGRAM ────────────────────────────────────────────────────────────────
 def load_telegram_ids() -> list:
     for fname in (BOT_SETTINGS_FILE, "sniper_settings.json", "dt_reversal_settings.json"):
         try:
@@ -133,7 +129,6 @@ def send_telegram(msg: str):
         except Exception as e:
             log.warning(f"Telegram error {cid}: {e}")
 
-# ─── STATE ───────────────────────────────────────────────────────────────────
 def load_state() -> dict:
     try:
         with open(STATE_FILE) as f:
@@ -168,7 +163,6 @@ def mark_pead_scan_done(state: dict):
     state["last_pead_scan_date"] = str(date.today())
     save_state(state)
 
-# ─── EARNINGS DATE ───────────────────────────────────────────────────────────
 def get_earnings_date(ticker: str) -> date | None:
     try:
         tk  = yf.Ticker(ticker)
@@ -196,7 +190,6 @@ def get_earnings_date(ticker: str) -> date | None:
         log.debug(f"Earnings date error {ticker}: {e}")
         return None
 
-# ─── IMPLIED MOVE ─────────────────────────────────────────────────────────────
 def get_implied_move(ticker: str) -> tuple[float | None, str | None, float | None]:
     """Return (implied_move_pct, expiry_used, spot_price)."""
     try:
@@ -232,7 +225,6 @@ def get_implied_move(ticker: str) -> tuple[float | None, str | None, float | Non
         log.debug(f"Implied move error {ticker}: {e}")
         return None, None, None
 
-# ─── EPS BEAT HISTORY ────────────────────────────────────────────────────────
 def get_eps_beat_rate(ticker: str) -> float | None:
     """
     Returns fraction of last 4 quarters where EPS beat estimate (0.0-1.0).
@@ -255,7 +247,6 @@ def get_eps_beat_rate(ticker: str) -> float | None:
         log.debug(f"EPS beat rate error {ticker}: {e}")
         return None
 
-# ─── HISTORICAL AVG MOVE ─────────────────────────────────────────────────────
 def get_hist_avg_move(ticker: str) -> float | None:
     try:
         tk = yf.Ticker(ticker)
@@ -269,7 +260,6 @@ def get_hist_avg_move(ticker: str) -> float | None:
     except Exception:
         return None
 
-# ─── ENHANCED DIRECTION PREDICTION ───────────────────────────────────────────
 def predict_direction(ticker: str, eps_beat_rate: float | None = None) -> tuple[str, list[str]]:
     """
     Enhanced directional model — score -5 to +5.
@@ -370,7 +360,6 @@ def predict_direction(ticker: str, eps_beat_rate: float | None = None) -> tuple[
         log.debug(f"Direction error {ticker}: {e}")
         return "NEUTRAL", ["error"]
 
-# ─── PEAD GAP DETECTION ───────────────────────────────────────────────────────
 def detect_pead_gap(ticker: str) -> dict | None:
     """
     Check if ticker reported earnings yesterday/after-hours and gapped today.
@@ -432,7 +421,6 @@ def detect_pead_gap(ticker: str) -> dict | None:
         log.debug(f"PEAD gap detection error {ticker}: {e}")
         return None
 
-# ─── OPTION PICKERS ──────────────────────────────────────────────────────────
 def _find_option(ticker: str, want_calls: bool, spot: float,
                  delta_min: float, delta_max: float,
                  dte_min: int, dte_max: int,
@@ -551,7 +539,6 @@ def pick_pead_option(ticker: str, direction: str, spot: float) -> dict | None:
                         dte_min=PEAD_DTE_MIN, dte_max=PEAD_DTE_MAX,
                         max_premium=10.00, min_oi=25)
 
-# ─── PRE-EARNINGS SCAN ───────────────────────────────────────────────────────
 def scan_for_pre_picks() -> list[dict]:
     today = date.today()
     end   = today + timedelta(days=LOOK_AHEAD_DAYS)
@@ -596,7 +583,6 @@ def scan_for_pre_picks() -> list[dict]:
     qualified.sort(key=lambda x: x["implied_move"], reverse=True)
     return qualified
 
-# ─── PEAD SCAN ───────────────────────────────────────────────────────────────
 def scan_for_pead_picks() -> list[dict]:
     log.info(f"[PEAD] Scanning {len(WATCHLIST)} tickers for post-earnings gap drift...")
     picks = []
@@ -621,7 +607,6 @@ def scan_for_pead_picks() -> list[dict]:
     picks.sort(key=lambda x: abs(x["gap_pct"]), reverse=True)
     return picks
 
-# ─── POST-EARNINGS AUDIT ─────────────────────────────────────────────────────
 def check_audits(state: dict):
     """Check pending picks for actual move and log accuracy."""
     pending = state.get("pending_audit", [])
@@ -689,7 +674,6 @@ def accuracy_bar(win_rate: float | None) -> str:
     bar = "█" * filled + "░" * (10 - filled)
     return f"📊 Model accuracy: {win_rate:.0f}%  [{bar}]"
 
-# ─── ALERT FORMATTERS ────────────────────────────────────────────────────────
 def format_pre_alert(picks: list[dict], state: dict) -> str:
     wk_after = picks_sent_this_week(state) + len(picks)
     wr, n    = model_accuracy(state)
@@ -708,7 +692,6 @@ def format_pre_alert(picks: list[dict], state: dict) -> str:
         spot_str = f"${p['spot']}" if p["spot"] else "n/a"
 
         lines += [
-            "━━━━━━━━━━━━━━━━━━━━━━",
             f"<b>#{i} {p['ticker']}</b>  ({spot_str})",
             f"📆 Earnings:  {p['earnings_date']}",
             f"⚡ Direction: {arrow}",
@@ -730,7 +713,6 @@ def format_pre_alert(picks: list[dict], state: dict) -> str:
         lines.append("")
 
     lines += [
-        "━━━━━━━━━━━━━━━━━━━━━━",
         f"Picks this week: {wk_after}/{MAX_PICKS_WEEK}",
         "<i>Lotto = high risk. Size small. Not financial advice.</i>",
     ]
@@ -751,7 +733,6 @@ def format_pead_alert(picks: list[dict], state: dict) -> str:
         gap_arrow = "▲" if p["direction"] == "UP" else "▼"
         sigs      = " · ".join(p.get("dir_signals", [])[:3])
         lines += [
-            "━━━━━━━━━━━━━━━━━━━━━━",
             f"<b>#{i} {p['ticker']}</b>  {dir_emoji} PEAD {p['direction']}",
             f"📆 Reported:    {p['earnings_date']}",
             f"📉 Gap:         {gap_arrow} {abs(p['gap_pct']):.1f}%  "
@@ -782,13 +763,11 @@ def format_pead_alert(picks: list[dict], state: dict) -> str:
         lines.append("")
 
     lines += [
-        "━━━━━━━━━━━━━━━━━━━━━━",
         "<i>PEAD = statistical drift after earnings gap. Not guaranteed.</i>",
         "<i>Exit if gap fills or after 5 trading days. Size conservatively.</i>",
     ]
     return "\n".join(lines)
 
-# ─── MAIN LOOP ───────────────────────────────────────────────────────────────
 def now_et() -> datetime:
     return datetime.now(ET)
 

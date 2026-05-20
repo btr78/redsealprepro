@@ -19,9 +19,7 @@ import pytz
 load_dotenv()
 ET = pytz.timezone('America/New_York')
 
-# ─────────────────────────────────────────────────────────────────
 # CONFIGURATION
-# ─────────────────────────────────────────────────────────────────
 BOT_TITLE          = "Day Trader B🤖T v5.0"
 ACCOUNT_BALANCE    = 10000.0
 RISK_PER_TRADE     = 0.01
@@ -101,9 +99,7 @@ WEEKLY_REPORT_HOUR = 18  # 6 PM ET
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 
-# ─────────────────────────────────────────────────────────────────
 # LOGGING
-# ─────────────────────────────────────────────────────────────────
 _fh = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
 _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 _ch = logging.StreamHandler(sys.stdout)
@@ -111,9 +107,7 @@ _ch.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_fh, _ch])
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────
 # UTILITIES
-# ─────────────────────────────────────────────────────────────────
 def flatten_columns(df):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -156,9 +150,7 @@ def idx_to_et(df):
         df.index = df.index.tz_convert(ET)
     return df
 
-# ─────────────────────────────────────────────────────────────────
 # SETTINGS & WATCHLIST
-# ─────────────────────────────────────────────────────────────────
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -182,9 +174,7 @@ def save_watchlist(watchlist):
     with open(WATCHLIST_FILE, 'w') as f:
         f.write('\n'.join(watchlist))
 
-# ─────────────────────────────────────────────────────────────────
 # TELEGRAM
-# ─────────────────────────────────────────────────────────────────
 def send_telegram(message, telegram_ids):
     if not TELEGRAM_TOKEN or not telegram_ids:
         return
@@ -199,9 +189,7 @@ def send_telegram(message, telegram_ids):
         except Exception as e:
             log.error(f"Telegram error {chat_id}: {e}")
 
-# ─────────────────────────────────────────────────────────────────
 # TRADE TRACKING
-# ─────────────────────────────────────────────────────────────────
 def load_trades():
     if os.path.exists(TRADES_FILE):
         try:
@@ -358,9 +346,7 @@ def get_consecutive_losses(ticker):
             break
     return count
 
-# ─────────────────────────────────────────────────────────────────
 # COOLDOWNS
-# ─────────────────────────────────────────────────────────────────
 def load_cooldowns():
     if os.path.exists(COOLDOWN_FILE):
         try:
@@ -376,9 +362,7 @@ def save_cooldowns(signals, last_any):
         json.dump({"signals": signals, "last_any": last_any,
                    "saved": datetime.now().isoformat()}, f)
 
-# ─────────────────────────────────────────────────────────────────
 # INDICATORS
-# ─────────────────────────────────────────────────────────────────
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain  = delta.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
@@ -437,9 +421,7 @@ def add_indicators(df):
     df['VolMult'] = df['Volume'] / vol_sma.replace(0, np.nan)
     return df
 
-# ─────────────────────────────────────────────────────────────────
 # MARKET REGIME
-# ─────────────────────────────────────────────────────────────────
 def get_vix():
     try:
         df = download_with_retry("^VIX", "2d", "1d")
@@ -498,9 +480,7 @@ def get_market_regime(spy_1h):
     if bear_c >= 0.65: return "bear",    round(bear_c, 2)
     return "neutral", round(max(bull_c, bear_c), 2)
 
-# ─────────────────────────────────────────────────────────────────
 # EARNINGS GUARD
-# ─────────────────────────────────────────────────────────────────
 def get_earnings_info(ticker):
     try:
         cal = yf.Ticker(ticker).calendar
@@ -523,9 +503,7 @@ def get_earnings_info(ticker):
     except Exception:
         return False, None, None
 
-# ─────────────────────────────────────────────────────────────────
 # STRATEGY A — OPENING RANGE BREAKOUT (ORB)
-# ─────────────────────────────────────────────────────────────────
 def get_opening_range(df_5m):
     today        = datetime.now(ET).date()
     mkt_open     = ET.localize(datetime.combine(today, dtime(9, 30)))
@@ -590,7 +568,6 @@ def strategy_orb(ticker, df_5m, df_1h, regime, regime_conf):
         log.info(f"{ticker} ORB R:R {rr:.1f} too low")
         return None, 0, {}
 
-    # ── SCORING ──
     score = 40  # Base: breakout confirmed
 
     # Volume (most important for ORB)
@@ -657,9 +634,7 @@ def strategy_orb(ticker, df_5m, df_1h, regime, regime_conf):
     log.info(f"{ticker} ORB {action} score={score}/100 vol={vol_mult:.1f}x rsi={rsi:.0f}")
     return action, score, details
 
-# ─────────────────────────────────────────────────────────────────
 # STRATEGY B — VWAP INSTITUTIONAL REVERSION
-# ─────────────────────────────────────────────────────────────────
 def strategy_vwap_reversion(ticker, df_5m, df_1h, regime, regime_conf):
     mt = market_time()
     if mt < VWAP_START or mt > VWAP_END:
@@ -727,7 +702,6 @@ def strategy_vwap_reversion(ticker, df_5m, df_1h, regime, regime_conf):
         log.info(f"{ticker} VWAP R:R {rr:.1f} too low")
         return None, 0, {}
 
-    # ── SCORING ──
     score = 35  # Base: all 3 required criteria met
 
     # RSI depth bonus
@@ -778,9 +752,7 @@ def strategy_vwap_reversion(ticker, df_5m, df_1h, regime, regime_conf):
     log.info(f"{ticker} VWAP {action} score={score}/100 rsi={rsi:.0f} vol={vol_mult:.1f}x")
     return action, score, details
 
-# ─────────────────────────────────────────────────────────────────
 # RELATIVE STRENGTH FILTER
-# ─────────────────────────────────────────────────────────────────
 def get_relative_strength(ticker, df_5m_ticker, df_5m_spy):
     today        = datetime.now(ET).date()
     session_open = ET.localize(datetime.combine(today, dtime(9, 30)))
@@ -820,9 +792,7 @@ def rs_filter_passes(action, rs, spy_dir):
         else:
             return rs >= 3.0               # Only heavily lagging on green day
 
-# ─────────────────────────────────────────────────────────────────
 # ALERT FORMATTING
-# ─────────────────────────────────────────────────────────────────
 def get_grade(score):
     if score >= 90: return "A+ 🌟"
     if score >= 80: return "A 🟢"
@@ -867,35 +837,27 @@ def format_signal_alert(ticker, action, score, details, regime, regime_conf,
 
     msg = (
         f"*Day Trader B🤖T v5.0*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*TICKER:* {ticker}\n"
         f"*SIGNAL:* {action_line}\n"
         f"*PRICE:* ${entry:.2f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{strat_line}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*SCORE:* {score}/100 — {grade}\n"
         f"*ENTRY:* ${entry:.2f}\n"
         f"*STOP:* ${stop:.2f}  (−{risk_pct:.1f}%)\n"
         f"*TARGET:* ${target:.2f}  (+{gain_pct:.1f}%)\n"
         f"*R:R RATIO:* 1:{rr:.1f}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{vol_line}\n"
         f"{rsi_line}\n"
         f"{trend_line}"
         f"{bb_line}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*MARKET:* {spy_emoji} SPY {spy_chg:+.2f}% | RS: {rs:+.2f}%\n"
         f"*REGIME:* {regime_emoji} {regime.upper()} ({regime_conf:.0%})"
         f"{vix_warn}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"_Risk 1% of account. Not financial advice._"
     )
     return msg[:4096]
 
-# ─────────────────────────────────────────────────────────────────
 # REPORTS
-# ─────────────────────────────────────────────────────────────────
 last_weekly_report_time = None
 
 def should_send_weekly_report():
@@ -944,34 +906,29 @@ def generate_weekly_report():
 
     report = (
         f"*Day Trader B🤖T v5.0 — WEEKLY REPORT*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*📅 THIS WEEK*\n"
         f"Signals: {len(weekly)} | Done: {len(weekly_done)}\n"
         f"Wins: {weekly_wins} | Losses: {len(weekly_done) - weekly_wins}\n"
         f"Win Rate: {weekly_wr:.1f}%\n"
         f"P&L: {week_emoji} {weekly_pnl:+.2f}%\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*{wr_emoji} ALL TIME*\n"
         f"Total: {stats['total']} | Pending: {stats['pending']}\n"
         f"Wins: {stats['wins']} | Losses: {stats['losses']}\n"
         f"Win Rate: {stats['win_rate']:.1f}%\n"
         f"Avg P&L: {stats['avg_pnl']:+.2f}%\n"
         f"Total P&L: {stats['total_pnl']:+.2f}%\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*📊 BY STRATEGY*\n"
         f"ORB: {orb_wr:.1f}% WR ({len(orb_trades)} trades)\n"
         f"VWAP: {vwap_wr:.1f}% WR ({len(vwap_trades)} trades)\n"
     )
 
     if best_tks:
-        report += "\n━━━━━━━━━━━━━━━━━━━━━\n*🏆 TOP TICKERS*\n"
         for tk, wr, n in best_tks:
             s = tk_stats[tk]
             report += f"{tk}: {wr:.0f}% WR ({s['wins']}W/{s['losses']}L)\n"
 
     if stats.get("best") and stats["best"].get("pnl_pct"):
         b = stats["best"]
-        report += f"\n━━━━━━━━━━━━━━━━━━━━━\n*🏅 BEST:* {b['ticker']} {b['action']} +{b['pnl_pct']:.2f}%\n"
     if stats.get("worst") and stats["worst"].get("pnl_pct"):
         w = stats["worst"]
         report += f"*💔 WORST:* {w['ticker']} {w['action']} {w['pnl_pct']:.2f}%\n"
@@ -979,9 +936,7 @@ def generate_weekly_report():
     last_weekly_report_time = datetime.now(ET)
     return report[:4096]
 
-# ─────────────────────────────────────────────────────────────────
 # TELEGRAM COMMAND LISTENER
-# ─────────────────────────────────────────────────────────────────
 last_update_id = 0
 scanning_paused = False
 _watchlist_ref = []
@@ -1185,9 +1140,7 @@ def listen_commands(watchlist, telegram_ids):
         log.error(f"listen_commands error: {e}")
     return watchlist
 
-# ─────────────────────────────────────────────────────────────────
 # MAIN SCAN
-# ─────────────────────────────────────────────────────────────────
 def scan(watchlist, telegram_ids, regime, regime_conf, spy_5m, vix, cooldowns, last_any):
     total_today, losses_today = get_daily_counts()
     if total_today >= MAX_TRADES_PER_DAY:
@@ -1291,9 +1244,7 @@ def scan(watchlist, telegram_ids, regime, regime_conf, spy_5m, vix, cooldowns, l
 
     return cooldowns, last_any
 
-# ─────────────────────────────────────────────────────────────────
 # MAIN
-# ─────────────────────────────────────────────────────────────────
 def main():
     log.info("=" * 60)
     log.info("Day Trader B🤖T v5.0 — Starting")
@@ -1325,7 +1276,6 @@ def main():
 
     send_telegram(
         f"*Day Trader B🤖T v5.0 — ONLINE* 🟢\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*Strategies:* ORB + VWAP Reversion\n"
         f"*RS Filter:* Active (outperform SPY required)\n"
         f"*Watchlist:* {len(watchlist)} tickers\n"
