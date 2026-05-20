@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RedSeal Prep — Red Seal Exam Prep",
-  description: "Pass your Red Seal exam on the first try. 135+ practice questions per trade with AI-powered tutoring. Built for Canadian tradespeople.",
+  title: "RedSeal Prep — Pass Your Red Seal Exam on the First Try",
+  description: "Canada's #1 Red Seal exam prep. 135+ original practice questions for Millwright 433A, Electrician 309A/442A and more. AI-powered tutoring. Study anywhere.",
   keywords: "red seal exam, 433A, millwright, electrician, trades exam prep, certificate of qualification",
   manifest: "/manifest.json",
 };

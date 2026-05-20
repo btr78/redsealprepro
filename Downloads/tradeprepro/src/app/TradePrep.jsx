@@ -1,6 +1,14 @@
 "use client";
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef } from "react";
+import { QUESTIONS_309A, CATEGORIES_309A } from "./questions309A";
+import { QUESTIONS_442A, CATEGORIES_442A } from "./questions442A";
+import { QUESTIONS_306A, CATEGORIES_306A } from "./questions306A";
+import { QUESTIONS_430A, CATEGORIES_430A } from "./questions430A";
+import { QUESTIONS_307A, CATEGORIES_307A } from "./questions307A";
+import { QUESTIONS_403A, CATEGORIES_403A } from "./questions403A";
+import { QUESTIONS_310S, CATEGORIES_310S } from "./questions310S";
+import { QUESTIONS_456A, CATEGORIES_456A } from "./questions456A";
 
 // ═══════════════════════════════════════════════════════════════
 // TRADEPREP PRO — Red Seal Exam Prep SaaS
@@ -10,13 +18,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ─── TRADE DEFINITIONS ──────────────────────────────────────
 const TRADES = [
   { id: "433A", name: "Industrial Mechanic (Millwright)", icon: "⚙️", questions: 135, active: true, color: "#ff6b35" },
-  { id: "309A", name: "Construction Electrician", icon: "⚡", questions: 0, active: false, color: "#3498db" },
-  { id: "442A", name: "Industrial Electrician", icon: "🔌", questions: 0, active: false, color: "#9b59b6" },
-  { id: "306A", name: "Plumber", icon: "🔧", questions: 0, active: false, color: "#1abc9c" },
-  { id: "403A", name: "Carpenter", icon: "🪚", questions: 0, active: false, color: "#e67e22" },
-  { id: "310S", name: "Auto Service Technician", icon: "🚗", questions: 0, active: false, color: "#e74c3c" },
-  { id: "307A", name: "Steamfitter/Pipefitter", icon: "🔩", questions: 0, active: false, color: "#2ecc71" },
-  { id: "456A", name: "Welder", icon: "🔥", questions: 0, active: false, color: "#f39c12" },
+  { id: "309A", name: "Construction Electrician", icon: "⚡", questions: 135, active: true, color: "#3498db" },
+  { id: "442A", name: "Industrial Electrician", icon: "🔌", questions: 135, active: true, color: "#9b59b6" },
+  { id: "306A", name: "Plumber", icon: "🔧", questions: 135, active: true, color: "#1abc9c" },
+  { id: "430A", name: "Tool and Die Maker", icon: "🔩", questions: 135, active: true, color: "#f39c12" },
+  { id: "403A", name: "Carpenter", icon: "🪚", questions: 100, active: true, color: "#e67e22" },
+  { id: "310S", name: "Auto Service Technician", icon: "🚗", questions: 120, active: true, color: "#e74c3c" },
+  { id: "307A", name: "Steamfitter/Pipefitter", icon: "🔩", questions: 130, active: true, color: "#2ecc71" },
+  { id: "456A", name: "Welder", icon: "🔥", questions: 120, active: true, color: "#f39c12" },
 ];
 
 const CATEGORIES = [
@@ -210,6 +219,62 @@ export default function TradePrep() {
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
   const [stats, setStats] = useState({ sessions: 0, attempted: 0, correct: 0, best: 0 });
   const [hovered, setHovered] = useState(null);
+
+  // ─── SPACED REPETITION & STREAK ───────────────────────────
+  const [wrongBank, setWrongBank] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try { return JSON.parse(localStorage.getItem("rsp_wrong_" + (trade?.id || "")) || "{}"); } catch { return {}; }
+  });
+  const [streak, setStreak] = useState(() => {
+    if (typeof window === "undefined") return { days: 0, last: "" };
+    try { return JSON.parse(localStorage.getItem("rsp_streak") || '{"days":0,"last":""}'); } catch { return { days: 0, last: "" }; }
+  });
+  const updateStreak = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setStreak(s => {
+      if (s.last === today) return s;
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const ns = { days: s.last === yesterday ? s.days + 1 : 1, last: today };
+      localStorage.setItem("rsp_streak", JSON.stringify(ns));
+      return ns;
+    });
+  };
+  const saveWrong = (tradeId, answers, questions) => {
+    const bank = JSON.parse(localStorage.getItem("rsp_wrong_" + tradeId) || "{}");
+    answers.filter(a => !a.ok).forEach(a => {
+      bank[a.qId] = (bank[a.qId] || 0) + 1;
+    });
+    // Remove questions answered correctly
+    answers.filter(a => a.ok).forEach(a => {
+      if (bank[a.qId]) { bank[a.qId]--; if (bank[a.qId] <= 0) delete bank[a.qId]; }
+    });
+    localStorage.setItem("rsp_wrong_" + tradeId, JSON.stringify(bank));
+    setWrongBank(bank);
+  };
+  const getWeakCats = () => {
+    const allQs = getQuestions();
+    const cats = getCategories();
+    const key = "rsp_catperf_" + (trade?.id || "");
+    try { 
+      const perf = JSON.parse(localStorage.getItem(key) || "{}");
+      return cats.map(c => ({
+        ...c, pct: perf[c.id] ? Math.round((perf[c.id].ok / perf[c.id].total) * 100) : -1,
+        total: perf[c.id]?.total || 0, ok: perf[c.id]?.ok || 0
+      })).filter(c => c.total > 0).sort((a, b) => a.pct - b.pct);
+    } catch { return []; }
+  };
+  const saveCatPerf = (tradeId, answers, questions) => {
+    const key = "rsp_catperf_" + tradeId;
+    const perf = JSON.parse(localStorage.getItem(key) || "{}");
+    answers.forEach(a => {
+      const q = questions.find(qq => qq.id === a.qId);
+      if (!q) return;
+      if (!perf[q.cat]) perf[q.cat] = { ok: 0, total: 0 };
+      perf[q.cat].total++;
+      if (a.ok) perf[q.cat].ok++;
+    });
+    localStorage.setItem(key, JSON.stringify(perf));
+  };
   const timerRef = useRef(null);
   const chatEndRef = useRef(null);
 
@@ -232,7 +297,19 @@ export default function TradePrep() {
   // Timer
   useEffect(() => {
     if (quiz?.running) {
-      timerRef.current = setInterval(() => setQuiz(q => q ? {...q, timer: q.timer+1} : q), 1000);
+      timerRef.current = setInterval(() => setQuiz(q => {
+        if (!q) return q;
+        const updated = {...q, timer: q.timer+1};
+        // Countdown for exam mode: auto-end when time runs out
+        if (q.countdown > 0) {
+          const remaining = q.countdown - q.timer - 1;
+          if (remaining <= 0) {
+            clearInterval(timerRef.current);
+            return {...updated, running: false};
+          }
+        }
+        return updated;
+      }), 1000);
     }
     return () => clearInterval(timerRef.current);
   }, [quiz?.running]);
@@ -240,20 +317,68 @@ export default function TradePrep() {
   // Scroll chat
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages]);
 
+  // ─── TRADE-AWARE HELPERS ────────────────────────────────────
+  const getQuestions = () => {
+    if (trade?.id === "309A") return QUESTIONS_309A;
+    if (trade?.id === "442A") return QUESTIONS_442A;
+    if (trade?.id === "306A") return QUESTIONS_306A;
+    if (trade?.id === "430A") return QUESTIONS_430A;
+    if (trade?.id === "307A") return QUESTIONS_307A;
+    if (trade?.id === "403A") return QUESTIONS_403A;
+    if (trade?.id === "310S") return QUESTIONS_310S;
+    if (trade?.id === "456A") return QUESTIONS_456A;
+    return QUESTIONS_433A;
+  };
+  const getCategories = () => {
+    if (trade?.id === "309A") return CATEGORIES_309A;
+    if (trade?.id === "442A") return CATEGORIES_442A;
+    if (trade?.id === "306A") return CATEGORIES_306A;
+    if (trade?.id === "430A") return CATEGORIES_430A;
+    if (trade?.id === "307A") return CATEGORIES_307A;
+    if (trade?.id === "403A") return CATEGORIES_403A;
+    if (trade?.id === "310S") return CATEGORIES_310S;
+    if (trade?.id === "456A") return CATEGORIES_456A;
+    return CATEGORIES;
+  };
+
   // ─── QUIZ LOGIC ───────────────────────────────────────────
   const startQuiz = (mode, cat) => {
-    let qs = QUESTIONS_433A;
+    const allQs = getQuestions();
+    let qs = allQs;
+    let countdown = 0;
+
     if (mode === "cat") qs = qs.filter(q => q.cat === cat);
     else if (mode === "daily") qs = shuffle(qs).slice(0, 20);
     else if (mode === "hard") qs = shuffle(qs.filter(q => q.type === "critical")).slice(0, 20);
+    else if (mode === "exam") {
+      // Real exam simulator: exact question count per trade, 4hr timer
+      const examCount = trade?.questions || 120;
+      qs = shuffle(allQs).slice(0, Math.min(examCount, allQs.length));
+      countdown = 4 * 60 * 60; // 4 hours in seconds
+    }
+    else if (mode === "review") {
+      // Spaced repetition: pull questions from wrong bank
+      const bank = JSON.parse(localStorage.getItem("rsp_wrong_" + (trade?.id || "")) || "{}");
+      const wrongIds = Object.keys(bank).map(Number);
+      qs = allQs.filter(q => wrongIds.includes(q.id));
+      if (qs.length === 0) { alert("No wrong answers to review! Keep practicing."); return; }
+      qs = shuffle(qs).slice(0, Math.min(30, qs.length));
+    }
+    else if (mode === "weak") {
+      // Weakest category drill
+      const weak = getWeakCats();
+      if (weak.length === 0) { alert("Complete some sessions first to identify weak spots."); return; }
+      const weakestCat = weak[0].id;
+      qs = shuffle(allQs.filter(q => q.cat === weakestCat)).slice(0, 20);
+    }
     else qs = shuffle(qs);
 
-    if (!sub && mode !== "daily") {
-      // Free users: only daily 20
-      qs = shuffle(QUESTIONS_433A).slice(0, 20);
+    if (!sub && !["daily"].includes(mode)) {
+      qs = shuffle(allQs).slice(0, 20);
     }
 
-    setQuiz({ questions: mode === "full" ? shuffle(qs) : shuffle(qs), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode });
+    updateStreak();
+    setQuiz({ questions: shuffle(qs), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode, countdown });
     setPage("quiz");
   };
 
@@ -279,6 +404,10 @@ export default function TradePrep() {
       };
       setStats(newStats);
       saveStats(newStats);
+      // Save wrong answers for spaced repetition + category performance
+      const finalAnswers = [...quiz.answers, { qId: quiz.questions[quiz.idx].id, sel: quiz.selected, ok: quiz.selected === quiz.questions[quiz.idx].ans }];
+      saveWrong(trade?.id, finalAnswers, quiz.questions);
+      saveCatPerf(trade?.id, finalAnswers, quiz.questions);
       setQuiz(q => ({ ...q, running: false }));
       setPage("results");
     }
@@ -342,13 +471,13 @@ export default function TradePrep() {
           Pass Your <span style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Red Seal</span> Exam<br/>On the First Try
         </h1>
         <p style={{ fontSize: "clamp(1rem, 2.5vw, 1.2rem)", color: T.text2, maxWidth: 520, margin: "0 auto 32px", lineHeight: 1.6 }}>
-          135+ practice questions per trade with AI-powered tutoring. Built by tradespeople, for tradespeople.
+          1,145+ practice questions across 9 trades with AI-powered tutoring. Built by tradespeople, for tradespeople.
         </p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
           <button onClick={() => setPage("trades")} style={{ ...btn(true), width: "auto", padding: "16px 32px", fontSize: 16 }}>Start Free Trial →</button>
         </div>
         <div style={{ display: "flex", gap: 24, justifyContent: "center", marginTop: 32, flexWrap: "wrap" }}>
-          {[["135+", "Questions"], ["6", "Exam Blocks"], ["70%", "Pass Mark"], ["AI", "Tutor"]].map(([n, l]) => (
+          {[["1,145+", "Questions"], ["9", "Trades Live"], ["70%", "Pass Mark"], ["AI", "Tutor"]].map(([n, l]) => (
             <div key={l} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 24, fontWeight: 900, color: T.accent }}>{n}</div>
               <div style={{ fontSize: 11, color: T.text2, textTransform: "uppercase", letterSpacing: "1px" }}>{l}</div>
@@ -424,6 +553,18 @@ export default function TradePrep() {
           ))}
         </div>
       </div>
+
+      {/* DISCLAIMER FOOTER */}
+      <div style={{ borderTop: `1px solid ${T.border}`, padding: "30px 20px", textAlign: "center" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+          <p style={{ fontSize: 11, color: T.text2, lineHeight: 1.7, marginBottom: 12 }}>
+            RedSeal Prep is an independent study tool and is not affiliated with, endorsed by, or sponsored by the Canadian Council of Directors of Apprenticeship (CCDA), the Red Seal Program, or any provincial/territorial apprenticeship authority. &quot;Red Seal&quot; refers to the Interprovincial Standards Red Seal Program. All practice questions are original content created for exam preparation purposes.
+          </p>
+          <p style={{ fontSize: 10, color: "rgba(139,148,158,0.5)" }}>
+            © {new Date().getFullYear()} RedSeal Prep. All rights reserved. &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Terms</span> &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Privacy</span>
+          </p>
+        </div>
+      </div>
     </div>
   );
 
@@ -481,7 +622,7 @@ export default function TradePrep() {
 
           {/* Stats */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 24 }}>
-            {[[stats.sessions, "Sessions"], [stats.attempted, "Done"], [`${pct}%`, "Accuracy"], [`${stats.best}%`, "Best"]].map(([v, l]) => (
+            {[[`🔥${streak.days}`, "Streak"], [stats.sessions, "Sessions"], [`${pct}%`, "Accuracy"], [`${stats.best}%`, "Best"]].map(([v, l]) => (
               <div key={l} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
                 <div style={{ fontSize: 20, fontWeight: 900, color: l === "Accuracy" ? (pct >= 70 ? T.green : T.red) : T.accent2 }}>{v}</div>
                 <div style={{ fontSize: 9, color: T.text2, textTransform: "uppercase", letterSpacing: "1px", marginTop: 2 }}>{l}</div>
@@ -492,12 +633,19 @@ export default function TradePrep() {
           {/* Modes */}
           <div style={{ fontSize: 11, fontWeight: 700, color: T.text2, textTransform: "uppercase", letterSpacing: "2px", marginBottom: 10 }}>Practice Modes</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
-            {[
+            {(() => {
+              const wb = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("rsp_wrong_" + (trade?.id || "")) || "{}") : {};
+              const wrongCount = Object.keys(wb).length;
+              const weakCats = getWeakCats();
+              const weakLabel = weakCats.length > 0 ? `Block ${weakCats[0].id} (${weakCats[0].pct}%)` : "Complete sessions first";
+              return [
               { m: "daily", icon: "⚡", name: "Daily 20", desc: "Quick daily practice", n: 20, free: true },
-              { m: "full", icon: "📋", name: "Full Exam", desc: "All 135 questions", n: 135, free: false },
+              { m: "exam", icon: "🎯", name: "Exam Simulator", desc: `Real ${trade?.questions || 120}Q timed exam`, n: trade?.questions || 120, free: false },
+              { m: "review", icon: "🔁", name: "Review Wrong", desc: `${wrongCount} saved mistakes`, n: Math.min(wrongCount, 30) || "—", free: false },
+              { m: "weak", icon: "📊", name: "Weak Spots", desc: weakLabel, n: 20, free: false },
               { m: "hard", icon: "🧠", name: "Hard Mode", desc: "Critical thinking only", n: 20, free: false },
               { m: "ai", icon: "🤖", name: "AI Tutor", desc: "Ask anything", n: "∞", free: false },
-            ].map(mode => (
+            ];})().map(mode => (
               <div key={mode.m}
                 onClick={() => mode.m === "ai" ? setChat(c => ({ ...c, open: true })) : (mode.free || sub) ? startQuiz(mode.m) : setPage("landing")}
                 style={{
@@ -514,7 +662,7 @@ export default function TradePrep() {
 
           {/* Categories */}
           <div style={{ fontSize: 11, fontWeight: 700, color: T.text2, textTransform: "uppercase", letterSpacing: "2px", marginBottom: 10 }}>By Category</div>
-          {CATEGORIES.map(cat => (
+          {getCategories().map(cat => (
             <div key={cat.id}
               onClick={() => sub ? startQuiz("cat", cat.id) : setPage("landing")}
               style={{
@@ -584,7 +732,7 @@ export default function TradePrep() {
   // ═══════════════════════════════════════════════════════════
   if (page === "quiz" && quiz) {
     const q = quiz.questions[quiz.idx];
-    const cat = CATEGORIES.find(c => c.id === q.cat);
+    const cat = getCategories().find(c => c.id === q.cat);
     const pct = ((quiz.idx + (quiz.answered ? 1 : 0)) / quiz.questions.length) * 100;
     const letters = ["A", "B", "C", "D"];
 
@@ -610,7 +758,11 @@ export default function TradePrep() {
             <span style={{ fontSize: 10, color: T.text2, background: T.surface, padding: "2px 8px", borderRadius: 4 }}>
               {q.type === "recall" ? "📖 Recall" : q.type === "procedure" ? "🔧 Procedure" : "🧠 Critical"}
             </span>
-            <span style={{ fontSize: 12, color: T.accent2, fontWeight: 700, fontFamily: T.mono }}>⏱ {fmtTime(quiz.timer)}</span>
+            <span style={{ fontSize: 12, color: quiz.countdown > 0 && (quiz.countdown - quiz.timer) < 600 ? T.red : T.accent2, fontWeight: 700, fontFamily: T.mono }}>
+              {quiz.countdown > 0 ? `⏱ ${fmtTime(Math.max(0, quiz.countdown - quiz.timer))} left` : `⏱ ${fmtTime(quiz.timer)}`}
+            </span>
+            {quiz.mode === "exam" && <span style={{ fontSize: 9, background: "rgba(255,107,53,0.15)", color: T.accent, padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>EXAM MODE</span>}
+            {quiz.mode === "review" && <span style={{ fontSize: 9, background: "rgba(76,175,80,0.15)", color: T.green, padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>REVIEW</span>}
           </div>
 
           {/* Question */}
@@ -696,7 +848,7 @@ export default function TradePrep() {
     const passed = pct >= 70;
     const [showWrong, setShowWrong] = useState(false);
 
-    const catBreak = CATEGORIES.map(cat => {
+    const catBreak = getCategories().map(cat => {
       const qs = quiz.answers.filter(a => quiz.questions.find(q => q.id === a.qId)?.cat === cat.id);
       const ok = qs.filter(a => a.ok).length;
       return { ...cat, total: qs.length, ok, pct: qs.length ? Math.round((ok / qs.length) * 100) : 0 };
@@ -716,7 +868,12 @@ export default function TradePrep() {
               <div style={{ fontSize: 40, fontWeight: 900, color: passed ? T.green : T.red, lineHeight: 1 }}>{pct}%</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: passed ? T.green : T.red, marginTop: 2 }}>{quiz.score}/{quiz.questions.length}</div>
             </div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: passed ? T.green : T.red }}>{passed ? "PASSED! 🎉" : "KEEP STUDYING"}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: passed ? T.green : T.red }}>
+              {quiz.mode === "exam" ? (passed ? "RED SEAL READY! 🏆" : "NOT YET — KEEP GOING 💪") : (passed ? "PASSED! 🎉" : "KEEP STUDYING")}
+            </div>
+            {quiz.mode === "exam" && <div style={{ fontSize: 11, color: T.text2, marginTop: 4, background: T.surface, display: "inline-block", padding: "4px 10px", borderRadius: 6 }}>
+              Exam Simulation: {quiz.questions.length} questions in {fmtTime(quiz.timer)}
+            </div>}
             <div style={{ fontSize: 12, color: T.text2, marginTop: 4 }}>Time: {fmtTime(quiz.timer)} • {Math.round(quiz.timer / quiz.questions.length)}s avg</div>
           </div>
 
@@ -741,7 +898,7 @@ export default function TradePrep() {
           </button>
 
           {showWrong && quiz.answers.filter(a => !a.ok).map((a, i) => {
-            const q = QUESTIONS_433A.find(q => q.id === a.qId);
+            const q = getQuestions().find(q => q.id === a.qId);
             if (!q) return null;
             return (
               <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 8 }}>
@@ -754,7 +911,34 @@ export default function TradePrep() {
             );
           })}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          {/* Weak Spot Analysis */}
+          {(() => {
+            const weak = getWeakCats();
+            if (weak.length === 0) return null;
+            const worst = weak.filter(c => c.pct < 70).slice(0, 3);
+            if (worst.length === 0) return null;
+            return (
+              <div style={{ background: "rgba(255,107,53,0.05)", border: `1px solid rgba(255,107,53,0.15)`, borderRadius: 10, padding: 14, marginTop: 16, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.accent, marginBottom: 8 }}>📊 YOUR WEAK SPOTS</div>
+                {worst.map(c => (
+                  <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 6 }}>
+                    <span style={{ color: T.text }}>Block {c.id}: {c.name}</span>
+                    <span style={{ color: T.red, fontWeight: 700 }}>{c.pct}%</span>
+                  </div>
+                ))}
+                <button onClick={() => startQuiz("weak")} style={{ ...btn(true), marginTop: 8, padding: "10px 16px", fontSize: 13 }}>🎯 Drill Weakest Category</button>
+              </div>
+            );
+          })()}
+
+          {/* Spaced repetition prompt */}
+          {Object.keys(wrongBank).length > 0 && (
+            <button onClick={() => startQuiz("review")} style={{ ...btn(false), marginTop: 8, marginBottom: 8, border: `1px solid ${T.green}`, color: T.green }}>
+              🔁 Review {Object.keys(wrongBank).length} Saved Mistakes
+            </button>
+          )}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button onClick={() => { setQuiz(null); setPage("dashboard"); }} style={{ ...btn(false), flex: 1 }}>← Dashboard</button>
             <button onClick={() => startQuiz("daily")} style={{ ...btn(true), flex: 1 }}>🔄 Quick 20</button>
           </div>
