@@ -9,28 +9,31 @@ export async function POST(req: NextRequest) {
 
     const { priceId, successUrl, cancelUrl } = await req.json();
 
+    const params = new URLSearchParams({
+      "mode": "subscription",
+      "line_items[0][price]": priceId,
+      "line_items[0][quantity]": "1",
+      "success_url": successUrl || "https://redsealprep.pro?sub=success",
+      "cancel_url": cancelUrl || "https://redsealprep.pro?sub=cancelled",
+      "allow_promotion_codes": "true",
+      "subscription_data[trial_period_days]": "7",
+    });
+
     const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${STRIPE_SECRET}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({
-        "mode": "subscription",
-        "payment_method_types[0]": "card",
-        "line_items[0][price]": priceId,
-        "line_items[0][quantity]": "1",
-        "success_url": successUrl || "https://redsealprep.pro?sub=success",
-        "cancel_url": cancelUrl || "https://redsealprep.pro?sub=cancelled",
-        "allow_promotion_codes": "true",
-        "subscription_data[trial_period_days]": "7",
-      }),
+      body: params,
     });
 
     const session = await response.json();
 
-    if (session.error) {
-      return NextResponse.json({ error: session.error.message }, { status: 400 });
+    if (!response.ok || session.error) {
+      const errMsg = session.error?.message || `Stripe error ${response.status}`;
+      console.error("Stripe checkout failed:", errMsg, JSON.stringify(session));
+      return NextResponse.json({ error: errMsg }, { status: 400 });
     }
 
     return NextResponse.json({ url: session.url });

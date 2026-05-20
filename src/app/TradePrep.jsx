@@ -353,7 +353,7 @@ export default function TradePrep() {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        alert("Payment setup failed. Please try again.");
+        alert("Payment error: " + (data.error || "Please try again."));
         setCheckingOut(false);
       }
     } catch {
