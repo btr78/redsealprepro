@@ -217,6 +217,10 @@ export default function TradePrep() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showRestore, setShowRestore] = useState(false);
+  const [restoreEmail, setRestoreEmail] = useState("");
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState(null);
   const [trade, setTrade] = useState(null);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
@@ -292,14 +296,19 @@ export default function TradePrep() {
         const r = { value: localStorage.getItem("tp-sub") };
         if (r?.value === "true") setSub(true);
       } catch(e) {}
-      // Activate sub when Stripe redirects back with ?sub=success
+      // Handle Stripe / magic link returns
       try {
         const params = new URLSearchParams(window.location.search);
-        if (params.get("sub") === "success") {
+        const subParam = params.get("sub");
+        if (subParam === "success") {
           setSub(true);
           localStorage.setItem("tp-sub", "true");
           window.history.replaceState({}, "", window.location.pathname);
           setPage("trades");
+        } else if (subParam === "invalid") {
+          window.history.replaceState({}, "", window.location.pathname);
+          setShowRestore(true);
+          setRestoreMsg({ ok: false, text: "That link has expired. Enter your email below to get a new one." });
         }
       } catch(e) {}
     })();
@@ -350,6 +359,29 @@ export default function TradePrep() {
       alert("Network error. Please check your connection and try again.");
       setCheckingOut(false);
     }
+  };
+
+  // ─── RESTORE ACCESS ─────────────────────────────────────────
+  const handleRestore = async () => {
+    if (!restoreEmail) return;
+    setRestoring(true);
+    setRestoreMsg(null);
+    try {
+      const res = await fetch("/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: restoreEmail }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRestoreMsg({ ok: true, text: "Check your email — click the link to activate access on this device." });
+      } else {
+        setRestoreMsg({ ok: false, text: data.error || "Something went wrong. Contact btsrana@gmail.com" });
+      }
+    } catch {
+      setRestoreMsg({ ok: false, text: "Network error. Please try again." });
+    }
+    setRestoring(false);
   };
 
   // ─── TRADE-AWARE HELPERS ────────────────────────────────────
@@ -573,6 +605,31 @@ export default function TradePrep() {
             <button onClick={handleCheckout} disabled={checkingOut} style={{ ...btn(true), marginTop: 20, opacity: checkingOut ? 0.7 : 1 }}>{checkingOut ? "Redirecting to Stripe…" : "Start 7-Day Free Trial →"}</button>
           </div>
         </div>
+      </div>
+
+      {/* RESTORE ACCESS */}
+      <div style={{ textAlign: "center", paddingBottom: 8 }}>
+        <button onClick={() => setShowRestore(r => !r)} style={{ background: "none", border: "none", color: T.text2, cursor: "pointer", fontSize: 12, fontFamily: T.font, textDecoration: "underline", padding: "4px 0" }}>
+          Already subscribed? Restore access on this device →
+        </button>
+        {showRestore && (
+          <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", padding: "0 20px" }}>
+            <input
+              type="email"
+              placeholder="Your subscription email"
+              value={restoreEmail}
+              onChange={e => setRestoreEmail(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleRestore()}
+              style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, color: T.text, fontFamily: T.font, fontSize: 14, width: 240, outline: "none" }}
+            />
+            <button onClick={handleRestore} disabled={restoring} style={{ ...btn(true), padding: "10px 20px", opacity: restoring ? 0.7 : 1 }}>
+              {restoring ? "Sending…" : "Send Link"}
+            </button>
+          </div>
+        )}
+        {restoreMsg && (
+          <p style={{ marginTop: 10, fontSize: 13, color: restoreMsg.ok ? T.green : "#e74c3c", padding: "0 20px" }}>{restoreMsg.text}</p>
+        )}
       </div>
 
       {/* TRADES PREVIEW */}
