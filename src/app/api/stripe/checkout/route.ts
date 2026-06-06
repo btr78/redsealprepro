@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
         "success_url": "https://redsealprep.pro?sub=success",
         "cancel_url": "https://redsealprep.pro?sub=cancelled",
         "allow_promotion_codes": "true",
+        "payment_method_collection": "always",
         "subscription_data[trial_period_days]": "7",
       }),
     });
