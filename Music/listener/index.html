@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MixCheck AI</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0b0f; font-family: -apple-system, 'SF Pro Display', sans-serif; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-up { animation: fadeUp 0.35s ease forwards; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #12141a; }
+    ::-webkit-scrollbar-thumb { background: #2a2d38; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    const C = {
+      bg: "#0a0b0f", surface: "#12141a", surface2: "#1a1d25",
+      border: "#2a2d38", borderHi: "#4a7cff",
+      primary: "#4a7cff", accent: "#00e5a0",
+      warning: "#ffb347", danger: "#ff5757",
+      text: "#e8eaf0", textDim: "#8a8fa0", textMuted: "#5a5f70",
+    };
+
+    const MIXERS = [
+      { id: "allen-heath-qu",     name: "Allen & Heath QU",      sub: "QU-16 / QU-24 / QU-32",    icon: "🎚" },
+      { id: "allen-heath-sq",     name: "Allen & Heath SQ",      sub: "SQ5 / SQ6 / SQ7",          icon: "🎚" },
+      { id: "allen-heath-dlive",  name: "Allen & Heath dLive",   sub: "C Class / S Class",         icon: "🎚" },
+      { id: "yamaha-ql",          name: "Yamaha QL Series",      sub: "QL1 / QL5",                 icon: "🎛" },
+      { id: "yamaha-cl",          name: "Yamaha CL Series",      sub: "CL3 / CL5",                 icon: "🎛" },
+      { id: "yamaha-tf",          name: "Yamaha TF Series",      sub: "TF1 / TF3 / TF5",           icon: "🎛" },
+      { id: "behringer-x32",      name: "Behringer X32",         sub: "X32 / X32 Compact / Rack",  icon: "🎙" },
+      { id: "midas-m32",          name: "Midas M32",             sub: "M32 / M32R / M32C",         icon: "🎙" },
+      { id: "soundcraft-si",      name: "Soundcraft Si",         sub: "Expression / Impact / Performer", icon: "🔊" },
+      { id: "presonus-studiolive",name: "PreSonus StudioLive",   sub: "32 Series III / 16R",       icon: "🔊" },
+      { id: "digico-sd",          name: "DiGiCo SD",             sub: "SD11 / SD12 / SD5",         icon: "🎚" },
+      { id: "avid-s6l",           name: "Avid S6L",              sub: "S6L-24 / S6L-32",           icon: "🎛" },
+      { id: "mackie-dl",          name: "Mackie DL Series",      sub: "DL16S / DL32R",             icon: "🎙" },
+      { id: "roland-m5000",       name: "Roland M-5000",         sub: "M-5000 / M-5000C",          icon: "🔊" },
+      { id: "other",              name: "Other / Custom",        sub: "Type your mixer model",     icon: "✏️" },
+    ];
+
+    // ─── Audio Analysis ───────────────────────────────────────────────────────
+    const analyzeAudio = (audioBuffer) => {
+      const sampleRate = audioBuffer.sampleRate;
+      const duration = audioBuffer.duration;
+      const channels = audioBuffer.numberOfChannels;
+      const totalSamples = audioBuffer.length;
+      const leftChannel = audioBuffer.getChannelData(0);
+      const rightChannel = channels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+
+      // Stride so we never process more than ~5M samples regardless of file length
+      const stride = Math.max(1, Math.floor(totalSamples / 5_000_000));
+
+      let sumSquares = 0, peak = 0, stridedCount = 0;
+      for (let i = 0; i < totalSamples; i += stride) {
+        const mono = (leftChannel[i] + rightChannel[i]) / 2;
+        sumSquares += mono * mono;
+        const abs = Math.abs(mono);
+        if (abs > peak) peak = abs;
+        stridedCount++;
+      }
+      const rms = Math.sqrt(sumSquares / stridedCount);
+      const rmsDb = 20 * Math.log10(rms + 1e-10);
+      const peakDb = 20 * Math.log10(peak + 1e-10);
+      const estimatedLUFS = rmsDb - 0.691;
+      const crestFactor = peakDb - rmsDb;
+
+      // ── Real Cooley-Tukey FFT (radix-2)
+      const fftSize = 2048; // must be power of 2
+      const fftReal = new Float32Array(fftSize);
+      const fftImag = new Float32Array(fftSize);
+      const runFFT = (signal) => {
+        fftReal.fill(0); fftImag.fill(0);
+        for (let i = 0; i < fftSize; i++) fftReal[i] = signal[i] || 0;
+        // bit-reversal
+        let j = 0;
+        for (let i = 1; i < fftSize; i++) {
+          let bit = fftSize >> 1;
+          for (; j & bit; bit >>= 1) j ^= bit;
+          j ^= bit;
+          if (i < j) {
+            let t = fftReal[i]; fftReal[i] = fftReal[j]; fftReal[j] = t;
+            t = fftImag[i]; fftImag[i] = fftImag[j]; fftImag[j] = t;
+          }
+        }
+        // butterfly
+        for (let len = 2; len <= fftSize; len <<= 1) {
+          const half = len >> 1;
+          const ang = -2 * Math.PI / len;
+          const wCos = Math.cos(ang), wSin = Math.sin(ang);
+          for (let i = 0; i < fftSize; i += len) {
+            let wr = 1, wi = 0;
+            for (let k = 0; k < half; k++) {
+              const ur = fftReal[i+k], ui = fftImag[i+k];
+              const vr = fftReal[i+k+half]*wr - fftImag[i+k+half]*wi;
+              const vi = fftReal[i+k+half]*wi + fftImag[i+k+half]*wr;
+              fftReal[i+k] = ur+vr; fftImag[i+k] = ui+vi;
+              fftReal[i+k+half] = ur-vr; fftImag[i+k+half] = ui-vi;
+              const nwr = wr*wCos - wi*wSin; wi = wr*wSin + wi*wCos; wr = nwr;
+            }
+          }
+        }
+        // magnitude spectrum (first half)
+        const mag = new Float32Array(fftSize / 2);
+        for (let i = 0; i < fftSize / 2; i++)
+          mag[i] = Math.sqrt(fftReal[i]*fftReal[i] + fftImag[i]*fftImag[i]);
+        return mag;
+      };
+
+      const bands = {
+        sub:        { low: 20,    high: 60,    energy: 0, label: "Sub Bass (20-60 Hz)" },
+        bass:       { low: 60,    high: 250,   energy: 0, label: "Bass (60-250 Hz)" },
+        lowMid:     { low: 250,   high: 500,   energy: 0, label: "Low Mid (250-500 Hz)" },
+        mid:        { low: 500,   high: 2000,  energy: 0, label: "Mid (500-2k Hz)" },
+        upperMid:   { low: 2000,  high: 4000,  energy: 0, label: "Upper Mid (2k-4k Hz)" },
+        presence:   { low: 4000,  high: 6000,  energy: 0, label: "Presence (4k-6k Hz)" },
+        brilliance: { low: 6000,  high: 12000, energy: 0, label: "Brilliance (6k-12k Hz)" },
+        air:        { low: 12000, high: 20000, energy: 0, label: "Air (12k-20k Hz)" },
+      };
+
+      // Sample evenly across the whole file (30 frames)
+      const numFrames = 30;
+      const frameStep = Math.floor(totalSamples / numFrames);
+      const segment = new Float32Array(fftSize);
+      for (let seg = 0; seg < numFrames; seg++) {
+        const offset = seg * frameStep;
+        for (let i = 0; i < fftSize; i++) {
+          const s = offset + i < totalSamples ? (leftChannel[offset+i] + rightChannel[offset+i]) / 2 : 0;
+          const win = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (fftSize - 1))); // Hann window
+          segment[i] = s * win;
+        }
+        const mag = runFFT(segment);
+        const freqRes = sampleRate / fftSize;
+        for (const key in bands) {
+          const b = bands[key];
+          const binLow = Math.max(Math.floor(b.low / freqRes), 0);
+          const binHigh = Math.min(Math.ceil(b.high / freqRes), mag.length - 1);
+          let e = 0;
+          for (let bin = binLow; bin <= binHigh; bin++) e += mag[bin] * mag[bin];
+          b.energy += e / Math.max(binHigh - binLow + 1, 1);
+        }
+      }
+
+      const totalEnergy = Object.values(bands).reduce((s, b) => s + b.energy, 0);
+      const bandAnalysis = {};
+      for (const key in bands) {
+        const b = bands[key];
+        const pct = totalEnergy > 0 ? (b.energy / totalEnergy) * 100 : 0;
+        const db = 10 * Math.log10(b.energy / Math.max(numFrames, 1) + 1e-10);
+        bandAnalysis[key] = { label: b.label, percentage: pct.toFixed(1), db: db.toFixed(1) };
+      }
+
+      // LRA — sample up to 500 evenly-spaced chunks of 0.4s
+      const chunkSamples = Math.floor(sampleRate * 0.4);
+      const maxChunks = 500;
+      const totalChunks = Math.floor(totalSamples / chunkSamples);
+      const chunkStride = Math.max(1, Math.floor(totalChunks / maxChunks));
+      const chunkLoudness = [];
+      for (let i = 0; i < totalChunks; i += chunkStride) {
+        let s = 0;
+        const off = i * chunkSamples;
+        for (let j = 0; j < chunkSamples; j += stride) {
+          const mono = (leftChannel[off + j] + rightChannel[off + j]) / 2;
+          s += mono * mono;
+        }
+        chunkLoudness.push(20 * Math.log10(Math.sqrt(s / (chunkSamples / stride)) + 1e-10));
+      }
+      const sorted = [...chunkLoudness].filter(d => d > -60).sort((a, b) => a - b);
+      const estimatedLRA = (sorted[Math.floor(sorted.length * 0.95)] || 0) - (sorted[Math.floor(sorted.length * 0.1)] || -60);
+
+      // Stereo width — strided
+      let midE = 0, sideE = 0;
+      for (let i = 0; i < totalSamples; i += stride) {
+        const mid  = (leftChannel[i] + rightChannel[i]) / 2;
+        const side = (leftChannel[i] - rightChannel[i]) / 2;
+        midE += mid * mid; sideE += side * side;
+      }
+      const stereoWidth = midE > 0 ? (sideE / midE) * 100 : 0;
+
+      // Waveform — 200 points, strided inner loop
+      const displayPoints = 200;
+      const pointSize = Math.floor(totalSamples / displayPoints);
+      const waveStride = Math.max(1, Math.floor(pointSize / 2000));
+      const waveform = [];
+      for (let i = 0; i < displayPoints; i++) {
+        let max = 0;
+        const off = i * pointSize;
+        for (let j = 0; j < pointSize && off + j < totalSamples; j += waveStride) {
+          const v = Math.abs((leftChannel[off + j] + rightChannel[off + j]) / 2);
+          if (v > max) max = v;
+        }
+        waveform.push(max);
+      }
+
+      return {
+        duration: duration.toFixed(1), sampleRate, channels, bitDepth: "32-bit float",
+        rmsDb: rmsDb.toFixed(1), peakDb: peakDb.toFixed(1),
+        estimatedLUFS: estimatedLUFS.toFixed(1), estimatedLRA: estimatedLRA.toFixed(1),
+        crestFactor: crestFactor.toFixed(1), stereoWidth: stereoWidth.toFixed(1),
+        bandAnalysis, waveform, chunkLoudness,
+        isClipping: peak >= 0.99, isTooLoud: estimatedLUFS > -10, isTooQuiet: estimatedLUFS < -18,
+        isOverCompressed: estimatedLRA < 4, isUnderCompressed: estimatedLRA > 14,
+        hasExcessSub: bandAnalysis.sub && parseFloat(bandAnalysis.sub.percentage) > 20,
+        lacksPresence: bandAnalysis.upperMid && parseFloat(bandAnalysis.upperMid.percentage) < 8,
+      };
+    };
+
+    // ─── AI Analysis ──────────────────────────────────────────────────────────
+    const getAISuggestions = async (analysis, fileName, mixerName, apiKey) => {
+      const prompt = `You are an expert audio engineer specializing in worship/church livestream mixes. The engineer is using a ${mixerName}.
+
+File: ${fileName}
+Duration: ${analysis.duration}s | Sample Rate: ${analysis.sampleRate} Hz | Channels: ${analysis.channels}
+
+LEVELS:
+- RMS: ${analysis.rmsDb} dBFS | Peak: ${analysis.peakDb} dBFS
+- Estimated LUFS: ${analysis.estimatedLUFS} | Estimated LRA: ${analysis.estimatedLRA} LU
+- Crest Factor: ${analysis.crestFactor} dB | Stereo Width: ${analysis.stereoWidth}%
+
+FREQUENCY BANDS:
+${Object.values(analysis.bandAnalysis).map(b => `- ${b.label}: ${b.percentage}% energy, ${b.db} dB`).join("\n")}
+
+FLAGS: Clipping:${analysis.isClipping} | Too Loud:${analysis.isTooLoud} | Too Quiet:${analysis.isTooQuiet} | Over-compressed:${analysis.isOverCompressed} | Under-compressed:${analysis.isUnderCompressed} | Excess Sub:${analysis.hasExcessSub} | Lacks Presence:${analysis.lacksPresence}
+
+Respond with JSON only, no markdown. Use this exact structure:
+{
+  "overallScore": <1-10>,
+  "overallVerdict": "<one sentence>",
+  "streamReadiness": "<ready|needs work|not ready>",
+  "issues": [
+    {"severity": "critical|warning|info", "title": "<title>", "description": "<1-2 sentences>", "fix": "<specific fix with numbers/settings>"}
+  ],
+  "eqSuggestions": [
+    {"frequency": "<freq range>", "action": "boost|cut", "amount": "<xdB>", "reason": "<why>"}
+  ],
+  "compressionNotes": "<2-3 sentences>",
+  "mixerGuide": [
+    {
+      "step": <number>,
+      "title": "<what to fix>",
+      "location": "<exact menu/button location on ${mixerName}>",
+      "action": "<detailed step-by-step button presses and values to dial in on the ${mixerName}>"
+    }
+  ],
+  "logicProTips": ["<Logic Pro X specific tip>", "<another tip>"]
+}`;
+
+      // Step 1: ask the API which models this key can actually use
+      const fetchModels = async () => {
+        try {
+          const r = await fetch("/api/models", { headers: { "X-Api-Key": apiKey } });
+          const d = await r.json();
+          if (d.data) return d.data.map(m => m.id);
+        } catch (_) {}
+        try {
+          const r = await fetch("https://api.anthropic.com/v1/models", {
+            headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-request-options": "allow-unsafe-browser" },
+          });
+          const d = await r.json();
+          if (d.data) return d.data.map(m => m.id);
+        } catch (_) {}
+        return null;
+      };
+
+      const liveModels = await fetchModels();
+      // Use live list if available; otherwise fall back to known names
+      const MODELS = liveModels && liveModels.length > 0
+        ? liveModels.filter(m => m.includes("claude")).slice(0, 3)
+        : ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"];
+
+      const tryModel = async (model) => {
+        const p = { model, max_tokens: 4096, messages: [{ role: "user", content: prompt }] };
+        let data;
+        try {
+          const r = await fetch("/api/analyze", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ apiKey, payload: p }),
+          });
+          data = await r.json();
+        } catch (_) {
+          const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01", "anthropic-dangerous-request-options": "allow-unsafe-browser" },
+            body: JSON.stringify(p),
+          });
+          data = await r.json();
+        }
+        return data;
+      };
+
+      try {
+        let lastError = "";
+        for (const model of MODELS) {
+          try {
+            const data = await tryModel(model);
+            if (data.error) {
+              lastError = `[${model}] ${data.error.message || JSON.stringify(data.error)}`;
+              continue; // try next model
+            }
+            const text = data.content.filter(i => i.type === "text").map(i => i.text).join("");
+            return JSON.parse(text.replace(/```json|```/g, "").trim());
+          } catch (e) {
+            lastError = `[${model}] ${e.message}`;
+          }
+        }
+        const modelsList = liveModels ? `Available: ${liveModels.slice(0,5).join(", ")}` : "Could not fetch model list";
+        return { _error: `${lastError || "All models failed"} — ${modelsList}` };
+      } catch (err) {
+        console.error("AI error:", err);
+        return { _error: err.message || "Unknown error" };
+      }
+    };
+
+    // ─── PDF Generation ───────────────────────────────────────────────────────
+    const generatePDF = (analysis, aiSuggestions, fileName, mixerName) => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const pw = doc.internal.pageSize.width;
+      const ph = doc.internal.pageSize.height;
+      const ml = 18, mr = 18;
+      const cw = pw - ml - mr;
+      let y = 0;
+
+      const newPage = () => {
+        doc.addPage();
+        // footer on new page is added at the end
+        y = 22;
+      };
+      const checkY = (need = 20) => { if (y + need > ph - 18) newPage(); };
+
+      const sectionHeader = (title, color = [74, 124, 255]) => {
+        checkY(14);
+        doc.setFillColor(...color);
+        doc.rect(ml, y, cw, 0.5, "F");
+        doc.setTextColor(...color);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(title, ml, y - 1);
+        y += 6;
+      };
+
+      // ── Cover header
+      doc.setFillColor(74, 124, 255);
+      doc.rect(0, 0, pw, 38, "F");
+      doc.setFillColor(0, 229, 160);
+      doc.rect(0, 38, pw, 2, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(22);
+      doc.setFont("helvetica", "bold");
+      doc.text("MixCheck AI", ml, 16);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text("Worship Audio Analysis Report", ml, 24);
+      doc.setFontSize(8);
+      doc.text(new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }), pw - mr, 16, { align: "right" });
+
+      // File + mixer strip
+      doc.setFillColor(18, 20, 26);
+      doc.rect(0, 40, pw, 14, "F");
+      doc.setTextColor(138, 143, 160);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("FILE", ml, 47);
+      doc.setTextColor(232, 234, 240);
+      doc.setFont("helvetica", "normal");
+      doc.text(fileName, ml + 10, 47);
+      doc.setTextColor(138, 143, 160);
+      doc.setFont("helvetica", "bold");
+      doc.text("MIXER", pw / 2, 47);
+      doc.setTextColor(0, 229, 160);
+      doc.setFont("helvetica", "normal");
+      doc.text(mixerName, pw / 2 + 13, 47);
+      doc.setTextColor(138, 143, 160);
+      doc.setFont("helvetica", "bold");
+      doc.text("DURATION", pw - mr - 50, 47);
+      doc.setTextColor(232, 234, 240);
+      doc.setFont("helvetica", "normal");
+      doc.text(`${analysis.duration}s  •  ${analysis.sampleRate} Hz  •  ${analysis.channels}ch`, pw - mr - 30, 47);
+
+      y = 64;
+
+      // ── Score + Verdict
+      if (aiSuggestions) {
+        const sc = aiSuggestions.overallScore;
+        const scoreRgb = sc >= 7 ? [0, 229, 160] : sc >= 4 ? [255, 179, 71] : [255, 87, 87];
+        checkY(28);
+        doc.setDrawColor(...scoreRgb);
+        doc.setLineWidth(1.5);
+        doc.circle(ml + 12, y + 10, 10);
+        doc.setTextColor(...scoreRgb);
+        doc.setFontSize(16);
+        doc.setFont("helvetica", "bold");
+        doc.text(String(sc), ml + 12, y + 12, { align: "center" });
+        doc.setFontSize(6);
+        doc.text("/10", ml + 12, y + 17, { align: "center" });
+
+        doc.setTextColor(138, 143, 160);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "bold");
+        doc.text("AI MIX SCORE", ml + 28, y + 5);
+
+        doc.setTextColor(232, 234, 240);
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        const vlines = doc.splitTextToSize(aiSuggestions.overallVerdict || "", cw - 35);
+        doc.text(vlines, ml + 28, y + 11);
+
+        const rdColor = aiSuggestions.streamReadiness === "ready" ? [0, 229, 160] :
+                        aiSuggestions.streamReadiness === "needs work" ? [255, 179, 71] : [255, 87, 87];
+        doc.setFillColor(...rdColor);
+        doc.roundedRect(ml + 28, y + 12 + vlines.length * 4, 38, 5.5, 1, 1, "F");
+        doc.setTextColor(10, 11, 15);
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "bold");
+        doc.text(`STREAM: ${(aiSuggestions.streamReadiness || "").toUpperCase()}`, ml + 47, y + 16 + vlines.length * 4, { align: "center" });
+
+        y += 30;
+      }
+
+      // ── Audio Metrics
+      sectionHeader("AUDIO METRICS");
+      const metrics = [
+        ["Loudness", `${analysis.estimatedLUFS} LUFS`, analysis.isTooLoud ? "danger" : analysis.isTooQuiet ? "warning" : "good"],
+        ["True Peak", `${analysis.peakDb} dBFS`, parseFloat(analysis.peakDb) > -0.5 ? "danger" : "good"],
+        ["LRA", `${analysis.estimatedLRA} LU`, analysis.isOverCompressed ? "danger" : analysis.isUnderCompressed ? "warning" : "good"],
+        ["RMS", `${analysis.rmsDb} dBFS`, "neutral"],
+        ["Crest Factor", `${analysis.crestFactor} dB`, "neutral"],
+        ["Stereo Width", `${analysis.stereoWidth}%`, "neutral"],
+      ];
+      const mColW = cw / 3;
+      metrics.forEach(([label, value, status], i) => {
+        const col = i % 3;
+        const row = Math.floor(i / 3);
+        if (col === 0) {
+          checkY(12);
+          if (row > 0 || i === 0) { /* handled */ }
+        }
+        const x = ml + col * mColW;
+        const rowY = y + Math.floor(i / 3) * 12;
+        doc.setFillColor(i % 2 === 0 ? 18 : 22, i % 2 === 0 ? 20 : 24, i % 2 === 0 ? 26 : 30);
+        doc.rect(x, rowY, mColW - 2, 11, "F");
+        doc.setTextColor(90, 95, 112);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.text(label.toUpperCase(), x + 3, rowY + 4.5);
+        const vc = status === "good" ? [0, 229, 160] : status === "warning" ? [255, 179, 71] : status === "danger" ? [255, 87, 87] : [138, 143, 160];
+        doc.setTextColor(...vc);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text(value, x + 3, rowY + 9.5);
+      });
+      y += Math.ceil(metrics.length / 3) * 12 + 6;
+
+      // Flags
+      const flags = [];
+      if (analysis.isClipping) flags.push(["⚠ CLIPPING", [255, 87, 87]]);
+      if (analysis.isTooLoud) flags.push(["TOO LOUD", [255, 179, 71]]);
+      if (analysis.isTooQuiet) flags.push(["TOO QUIET", [255, 179, 71]]);
+      if (analysis.isOverCompressed) flags.push(["OVER-COMPRESSED", [255, 87, 87]]);
+      if (analysis.isUnderCompressed) flags.push(["WIDE DYNAMICS", [255, 179, 71]]);
+      if (flags.length > 0) {
+        checkY(10);
+        let fx = ml;
+        flags.forEach(([label, rgb]) => {
+          const w = label.length * 1.8 + 8;
+          doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+          doc.roundedRect(fx, y, w, 5.5, 1, 1, "F");
+          doc.setTextColor(10, 11, 15);
+          doc.setFontSize(6);
+          doc.setFont("helvetica", "bold");
+          doc.text(label, fx + w / 2, y + 3.8, { align: "center" });
+          fx += w + 3;
+        });
+        y += 10;
+      }
+
+      // ── Frequency bands visual
+      sectionHeader("FREQUENCY SPECTRUM");
+      const bandList = Object.values(analysis.bandAnalysis);
+      const bw = cw / bandList.length;
+      const maxBandH = 18;
+      const maxPct = Math.max(...bandList.map(b => parseFloat(b.percentage)), 1);
+      bandList.forEach((b, i) => {
+        const pct = parseFloat(b.percentage);
+        const bh = Math.max((pct / maxPct) * maxBandH, 1);
+        const bx = ml + i * bw;
+        const isHigh = pct > 20, isLow = pct < 5;
+        doc.setFillColor(isHigh ? 255 : isLow ? 90 : 0, isHigh ? 179 : isLow ? 95 : 229, isHigh ? 71 : isLow ? 112 : 160);
+        doc.rect(bx + 1, y + maxBandH - bh, bw - 2, bh, "F");
+        doc.setTextColor(90, 95, 112);
+        doc.setFontSize(5.5);
+        doc.setFont("helvetica", "normal");
+        const shortLabel = b.label.split("(")[0].trim().split(" ").slice(0, 2).join(" ");
+        doc.text(shortLabel, bx + bw / 2, y + maxBandH + 4, { align: "center" });
+        doc.text(`${pct}%`, bx + bw / 2, y + maxBandH + 8, { align: "center" });
+      });
+      y += maxBandH + 12;
+
+      // ── Issues & Fixes
+      if (aiSuggestions?.issues?.length > 0) {
+        sectionHeader("ISSUES & FIXES");
+        aiSuggestions.issues.forEach((issue) => {
+          const rgb = issue.severity === "critical" ? [255, 87, 87] : issue.severity === "warning" ? [255, 179, 71] : [74, 124, 255];
+          const descLines = doc.splitTextToSize(issue.description || "", cw - 14);
+          const fixLines = doc.splitTextToSize(`FIX: ${issue.fix || ""}`, cw - 14);
+          const bh = 7 + descLines.length * 4.5 + fixLines.length * 4.5 + 5;
+          checkY(bh + 4);
+          doc.setFillColor(18, 20, 26);
+          doc.roundedRect(ml, y, cw, bh, 1.5, 1.5, "F");
+          doc.setFillColor(...rgb);
+          doc.rect(ml, y, 2.5, bh, "F");
+          doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+          doc.roundedRect(ml + 6, y + 2.5, 18, 4, 1, 1, "F");
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(5.5);
+          doc.setFont("helvetica", "bold");
+          doc.text(issue.severity.toUpperCase(), ml + 15, y + 5.3, { align: "center" });
+          doc.setTextColor(232, 234, 240);
+          doc.setFontSize(9.5);
+          doc.setFont("helvetica", "bold");
+          doc.text(issue.title || "", ml + 27, y + 5.5);
+          doc.setTextColor(138, 143, 160);
+          doc.setFontSize(8.5);
+          doc.setFont("helvetica", "normal");
+          doc.text(descLines, ml + 6, y + 11);
+          doc.setTextColor(0, 229, 160);
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "bold");
+          doc.text(fixLines, ml + 6, y + 11 + descLines.length * 4.5 + 2);
+          y += bh + 4;
+        });
+      }
+
+      // ── EQ Suggestions
+      if (aiSuggestions?.eqSuggestions?.length > 0) {
+        sectionHeader("EQ SUGGESTIONS");
+        aiSuggestions.eqSuggestions.forEach((eq, i) => {
+          const isBoost = eq.action === "boost";
+          const reasonLines = doc.splitTextToSize(eq.reason || "", cw - 75);
+          const rh = Math.max(9, reasonLines.length * 4 + 5);
+          checkY(rh + 2);
+          doc.setFillColor(i % 2 === 0 ? 18 : 22, i % 2 === 0 ? 20 : 24, i % 2 === 0 ? 26 : 30);
+          doc.rect(ml, y, cw, rh, "F");
+          doc.setFillColor(isBoost ? 0 : 255, isBoost ? 229 : 87, isBoost ? 160 : 87);
+          doc.roundedRect(ml + 2, y + 2, 22, 5, 1, 1, "F");
+          doc.setTextColor(10, 11, 15);
+          doc.setFontSize(7);
+          doc.setFont("helvetica", "bold");
+          doc.text(`${isBoost ? "BOOST" : "CUT"}  ${eq.amount}`, ml + 13, y + 5.5, { align: "center" });
+          doc.setTextColor(74, 124, 255);
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.text(eq.frequency || "", ml + 28, y + 5.5);
+          doc.setTextColor(138, 143, 160);
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "normal");
+          doc.text(reasonLines, ml + 70, y + 4.5);
+          y += rh + 2;
+        });
+        y += 4;
+      }
+
+      // ── Compression Notes
+      if (aiSuggestions?.compressionNotes) {
+        sectionHeader("COMPRESSION NOTES");
+        const lines = doc.splitTextToSize(aiSuggestions.compressionNotes, cw - 8);
+        checkY(lines.length * 4.5 + 10);
+        doc.setFillColor(18, 20, 26);
+        doc.roundedRect(ml, y, cw, lines.length * 4.5 + 8, 1.5, 1.5, "F");
+        doc.setTextColor(138, 143, 160);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        doc.text(lines, ml + 5, y + 6);
+        y += lines.length * 4.5 + 14;
+      }
+
+      // ── Mixer Step-by-Step Guide
+      if (aiSuggestions?.mixerGuide?.length > 0) {
+        sectionHeader(`${mixerName.toUpperCase()} — STEP-BY-STEP FIX GUIDE`, [0, 229, 160]);
+        aiSuggestions.mixerGuide.forEach((step) => {
+          const locLines = doc.splitTextToSize(`📍 ${step.location || ""}`, cw - 22);
+          const actLines = doc.splitTextToSize(step.action || "", cw - 22);
+          const bh = 8 + locLines.length * 4 + actLines.length * 4.5 + 4;
+          checkY(bh + 5);
+          doc.setFillColor(15, 18, 22);
+          doc.roundedRect(ml, y, cw, bh, 2, 2, "F");
+          doc.setDrawColor(0, 229, 160);
+          doc.setLineWidth(0.4);
+          doc.roundedRect(ml, y, cw, bh, 2, 2, "S");
+          doc.setLineWidth(0.3);
+          doc.setFillColor(0, 229, 160);
+          doc.circle(ml + 8, y + bh / 2, 5, "F");
+          doc.setTextColor(10, 11, 15);
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "bold");
+          doc.text(String(step.step), ml + 8, y + bh / 2 + 1, { align: "center" });
+          doc.setTextColor(232, 234, 240);
+          doc.setFontSize(9.5);
+          doc.setFont("helvetica", "bold");
+          doc.text(step.title || "", ml + 18, y + 7);
+          doc.setTextColor(0, 229, 160);
+          doc.setFontSize(7.5);
+          doc.setFont("helvetica", "normal");
+          doc.text(locLines, ml + 18, y + 13);
+          doc.setTextColor(138, 143, 160);
+          doc.setFontSize(8);
+          doc.text(actLines, ml + 18, y + 13 + locLines.length * 4 + 2);
+          y += bh + 5;
+        });
+      }
+
+      // ── Logic Pro Tips
+      if (aiSuggestions?.logicProTips?.length > 0) {
+        sectionHeader("LOGIC PRO TIPS", [74, 124, 255]);
+        aiSuggestions.logicProTips.forEach((tip, i) => {
+          const lines = doc.splitTextToSize(tip, cw - 14);
+          const bh = lines.length * 4.5 + 7;
+          checkY(bh + 4);
+          doc.setFillColor(18, 20, 26);
+          doc.roundedRect(ml, y, cw, bh, 1.5, 1.5, "F");
+          doc.setFillColor(74, 124, 255);
+          doc.rect(ml, y, 2.5, bh, "F");
+          doc.setTextColor(0, 229, 160);
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.text("→", ml + 6, y + bh / 2 + 1);
+          doc.setTextColor(138, 143, 160);
+          doc.setFontSize(8.5);
+          doc.setFont("helvetica", "normal");
+          doc.text(lines, ml + 13, y + 5.5);
+          y += bh + 4;
+        });
+      }
+
+      // ── Footer on all pages
+      const total = doc.internal.pages.length - 1;
+      for (let p = 1; p <= total; p++) {
+        doc.setPage(p);
+        doc.setFillColor(12, 14, 18);
+        doc.rect(0, ph - 12, pw, 12, "F");
+        doc.setTextColor(90, 95, 112);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.text("MixCheck AI  —  Worship Audio Analyzer", ml, ph - 5);
+        doc.text(`${p} / ${total}`, pw - mr, ph - 5, { align: "right" });
+      }
+
+      const safe = fileName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, "_");
+      doc.save(`MixCheckAI_${safe}_${mixerName.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
+    };
+
+    // ─── UI Components ────────────────────────────────────────────────────────
+    const Waveform = ({ data, width = 540, height = 80 }) => {
+      if (!data?.length) return null;
+      const max = Math.max(...data, 0.01);
+      const bw = width / data.length;
+      return (
+        <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ display: "block" }}>
+          {data.map((v, i) => {
+            const h = (v / max) * (height / 2);
+            const t = v / max;
+            const color = t > 0.9 ? C.danger : t > 0.7 ? C.warning : C.primary;
+            return (
+              <g key={i}>
+                <rect x={i * bw} y={height / 2 - h} width={Math.max(bw - 0.5, 0.5)} height={h} fill={color} opacity={0.8} rx={0.5} />
+                <rect x={i * bw} y={height / 2} width={Math.max(bw - 0.5, 0.5)} height={h} fill={color} opacity={0.4} rx={0.5} />
+              </g>
+            );
+          })}
+          <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke={C.textMuted} strokeWidth={0.5} opacity={0.3} />
+        </svg>
+      );
+    };
+
+    const FreqBars = ({ bandAnalysis }) => {
+      const bands = Object.entries(bandAnalysis);
+      const maxP = Math.max(...bands.map(([, b]) => parseFloat(b.percentage)), 1);
+      return (
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 100, padding: "0 2px" }}>
+          {bands.map(([key, b]) => {
+            const pct = parseFloat(b.percentage);
+            const h = Math.max((pct / maxP) * 84, 3);
+            const color = pct > 20 ? C.warning : pct < 5 ? C.textMuted : C.accent;
+            return (
+              <div key={key} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 8, color: C.textDim }}>{pct}%</span>
+                <div style={{ width: "100%", height: h, background: color, borderRadius: 3, opacity: 0.85, transition: "height 0.5s ease" }} />
+                <span style={{ fontSize: 7, color: C.textMuted, textAlign: "center", lineHeight: 1.1 }}>
+                  {b.label.split(" (")[0]}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    const Metric = ({ label, value, unit, status }) => {
+      const sc = status === "good" ? C.accent : status === "warning" ? C.warning : status === "danger" ? C.danger : C.textDim;
+      return (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", flex: 1, minWidth: 95 }}>
+          <div style={{ fontSize: 9, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>{label}</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+            <span style={{ fontSize: 20, fontWeight: 700, color: sc, fontFamily: "'SF Mono', monospace" }}>{value}</span>
+            {unit && <span style={{ fontSize: 10, color: C.textMuted }}>{unit}</span>}
+          </div>
+        </div>
+      );
+    };
+
+    const IssueCard = ({ issue }) => {
+      const colors = { critical: C.danger, warning: C.warning, info: C.primary };
+      const color = colors[issue.severity] || C.textDim;
+      return (
+        <div style={{ background: C.surface, border: `1px solid ${color}25`, borderLeft: `3px solid ${color}`, borderRadius: 8, padding: 13, marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5 }}>
+            <span style={{ background: `${color}20`, color, fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 4, textTransform: "uppercase" }}>
+              {issue.severity === "critical" ? "!!" : issue.severity === "warning" ? "!" : "i"} {issue.severity}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{issue.title}</span>
+          </div>
+          <p style={{ fontSize: 11.5, color: C.textDim, margin: "0 0 7px", lineHeight: 1.5 }}>{issue.description}</p>
+          <div style={{ background: `${C.accent}0d`, border: `1px solid ${C.accent}20`, borderRadius: 6, padding: "7px 10px" }}>
+            <span style={{ fontSize: 9, color: C.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Fix: </span>
+            <span style={{ fontSize: 11.5, color: C.text }}>{issue.fix}</span>
+          </div>
+        </div>
+      );
+    };
+
+    const ScoreRing = ({ score }) => {
+      const r = 38, circ = 2 * Math.PI * r;
+      const color = score >= 7 ? C.accent : score >= 4 ? C.warning : C.danger;
+      return (
+        <div style={{ position: "relative", width: 90, height: 90, flexShrink: 0 }}>
+          <svg width={90} height={90} style={{ transform: "rotate(-90deg)" }}>
+            <circle cx={45} cy={45} r={r} fill="none" stroke={C.border} strokeWidth={5} />
+            <circle cx={45} cy={45} r={r} fill="none" stroke={color} strokeWidth={5}
+              strokeDasharray={circ} strokeDashoffset={circ - (score / 10) * circ}
+              strokeLinecap="round" style={{ transition: "stroke-dashoffset 1s ease" }} />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color, fontFamily: "'SF Mono', monospace" }}>{score}</span>
+            <span style={{ fontSize: 8, color: C.textMuted }}>/10</span>
+          </div>
+        </div>
+      );
+    };
+
+    // ─── Screen: Mixer Selection ───────────────────────────────────────────────
+    const MixerSelect = ({ onContinue }) => {
+      const [selected, setSelected] = useState(null);
+      const [custom, setCustom] = useState("");
+      const [apiKey, setApiKey] = useState("");
+      const [showKey, setShowKey] = useState(false);
+
+      const mixerName = selected?.id === "other" ? custom.trim() : selected?.name;
+      const canContinue = selected && (selected.id !== "other" || custom.trim().length > 1);
+
+      return (
+        <div className="fade-up" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+          {/* Header */}
+          <div style={{ background: `linear-gradient(135deg, ${C.surface} 0%, ${C.bg} 100%)`, borderBottom: `1px solid ${C.border}`, padding: "18px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>🎛</div>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: -0.3 }}>MixCheck AI</h1>
+              <p style={{ margin: 0, fontSize: 10, color: C.textMuted }}>Worship Audio Analyzer</p>
+            </div>
+          </div>
+
+          <div style={{ padding: "28px 20px 40px", maxWidth: 680, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, letterSpacing: -0.4 }}>What mixer are you using?</h2>
+              <p style={{ fontSize: 13, color: C.textDim, lineHeight: 1.5 }}>
+                MixCheck AI will tailor its report and step-by-step fix guide<br />specifically for your console.
+              </p>
+            </div>
+
+            {/* Mixer Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 10, marginBottom: 16 }}>
+              {MIXERS.map(m => {
+                const isSelected = selected?.id === m.id;
+                return (
+                  <div key={m.id} onClick={() => setSelected(m)} style={{
+                    background: isSelected ? `${C.primary}18` : C.surface,
+                    border: `1.5px solid ${isSelected ? C.primary : C.border}`,
+                    borderRadius: 12, padding: "14px 12px", cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    boxShadow: isSelected ? `0 0 0 1px ${C.primary}40` : "none",
+                  }}>
+                    <div style={{ fontSize: 22, marginBottom: 6 }}>{m.icon}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: isSelected ? C.primary : C.text, marginBottom: 3, lineHeight: 1.3 }}>{m.name}</div>
+                    <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.3 }}>{m.sub}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Custom input */}
+            {selected?.id === "other" && (
+              <div style={{ marginBottom: 16 }}>
+                <input
+                  autoFocus
+                  placeholder="e.g. Soundcraft Ui24R, Behringer Wing..."
+                  value={custom}
+                  onChange={e => setCustom(e.target.value)}
+                  style={{
+                    width: "100%", background: C.surface, border: `1.5px solid ${C.borderHi}`,
+                    borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 13,
+                    outline: "none",
+                  }}
+                />
+              </div>
+            )}
+
+            {/* API Key (optional) */}
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+              <div onClick={() => setShowKey(!showKey)} style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
+                <div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Anthropic API Key</span>
+                  <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 8 }}>optional — enables AI mix analysis</span>
+                </div>
+                <span style={{ color: C.textMuted, fontSize: 12, transition: "transform 0.2s", transform: showKey ? "rotate(180deg)" : "none" }}>▾</span>
+              </div>
+              {showKey && (
+                <div style={{ padding: "0 16px 14px" }}>
+                  <input
+                    type="password"
+                    placeholder="sk-ant-..."
+                    value={apiKey}
+                    onChange={e => setApiKey(e.target.value)}
+                    style={{
+                      width: "100%", background: C.bg, border: `1px solid ${C.border}`,
+                      borderRadius: 8, padding: "10px 12px", color: C.text, fontSize: 12,
+                      outline: "none",
+                    }}
+                  />
+                  <p style={{ fontSize: 10, color: C.textMuted, marginTop: 6 }}>
+                    Key is used only in this session and never stored. Audio analysis works without it.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Continue button */}
+            <button
+              disabled={!canContinue}
+              onClick={() => onContinue(mixerName, apiKey)}
+              style={{
+                width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: canContinue ? "pointer" : "not-allowed",
+                background: canContinue ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : C.surface,
+                color: canContinue ? "#fff" : C.textMuted, fontSize: 14, fontWeight: 700,
+                transition: "all 0.2s ease", letterSpacing: 0.2,
+              }}
+            >
+              {canContinue ? `Continue with ${mixerName} →` : "Select your mixer to continue"}
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // ─── Screen: Upload ────────────────────────────────────────────────────────
+    const UploadScreen = ({ mixer, onFile, onChangeMixer }) => {
+      const [dragOver, setDragOver] = useState(false);
+      const fileInputRef = useRef(null);
+      const handleDrop = useCallback((e) => {
+        e.preventDefault(); setDragOver(false);
+        const f = e.dataTransfer.files[0];
+        if (f && f.type.startsWith("audio/")) onFile(f);
+      }, [onFile]);
+      return (
+        <div className="fade-up" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.surface} 0%, ${C.bg} 100%)`, borderBottom: `1px solid ${C.border}`, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>🎛</div>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: -0.3 }}>MixCheck AI</h1>
+                <p style={{ margin: 0, fontSize: 10, color: C.textMuted }}>Worship Audio Analyzer</p>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ background: `${C.accent}15`, border: `1px solid ${C.accent}30`, borderRadius: 8, padding: "5px 12px" }}>
+                <span style={{ fontSize: 10, color: C.accent, fontWeight: 600 }}>🎚 {mixer}</span>
+              </div>
+              <button onClick={onChangeMixer} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 8, color: C.textDim, fontSize: 11, padding: "5px 10px", cursor: "pointer" }}>
+                Change
+              </button>
+            </div>
+          </div>
+
+          <div style={{ padding: "48px 20px", maxWidth: 600, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Drop your audio file</h2>
+              <p style={{ fontSize: 13, color: C.textDim }}>
+                We'll analyze your mix and generate a <strong style={{ color: C.accent }}>full PDF report</strong> with<br />step-by-step fixes for your <strong style={{ color: C.primary }}>{mixer}</strong>.
+              </p>
+            </div>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragOver ? C.primary : C.border}`,
+                borderRadius: 20, padding: "60px 24px", textAlign: "center", cursor: "pointer",
+                background: dragOver ? `${C.primary}08` : C.surface,
+                transition: "all 0.2s ease",
+                boxShadow: dragOver ? `0 0 30px ${C.primary}20` : "none",
+              }}
+            >
+              <div style={{ fontSize: 56, marginBottom: 14 }}>🎵</div>
+              <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{dragOver ? "Release to analyze" : "Drop your audio file here"}</p>
+              <p style={{ fontSize: 12, color: C.textMuted }}>MP3 · WAV · M4A · AAC · FLAC — or click to browse</p>
+              <input ref={fileInputRef} type="file" accept="audio/*" onChange={e => onFile(e.target.files[0])} style={{ display: "none" }} />
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ─── Main App ──────────────────────────────────────────────────────────────
+    function App() {
+      const [step, setStep] = useState(0); // 0=mixer, 1=upload, 2=results
+      const [mixer, setMixer] = useState("");
+      const [apiKey, setApiKey] = useState("");
+      const [audioFile, setAudioFile] = useState(null);
+      const [analysis, setAnalysis] = useState(null);
+      const [aiSuggestions, setAiSuggestions] = useState(null);
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [isGettingAI, setIsGettingAI] = useState(false);
+      const [progress, setProgress] = useState("");
+      const [aiError, setAiError] = useState(false);
+
+      const handleFile = useCallback(async (file) => {
+        if (!file) return;
+        setAudioFile(file);
+        setAnalysis(null);
+        setAiSuggestions(null);
+        setAiError(false);
+        setIsAnalyzing(true);
+        setProgress("Decoding audio...");
+
+        try {
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const arrayBuffer = await file.arrayBuffer();
+          setProgress("Analyzing frequencies & levels...");
+          const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          const result = analyzeAudio(audioBuffer);
+          setAnalysis(result);
+          setStep(2);
+          audioCtx.close();
+
+          setProgress("Getting AI suggestions...");
+          setIsAnalyzing(false);
+          setIsGettingAI(true);
+          const suggestions = await getAISuggestions(result, file.name, mixer, apiKey);
+          if (!suggestions || suggestions._error) {
+            setAiError(suggestions?._error || "Request failed — check your API key and internet connection.");
+            setAiSuggestions(null);
+          } else {
+            setAiSuggestions(suggestions);
+          }
+          setIsGettingAI(false);
+          setProgress("");
+        } catch (err) {
+          console.error(err);
+          setProgress("Error analyzing audio. Try a different file format.");
+          setIsAnalyzing(false);
+          setIsGettingAI(false);
+        }
+      }, [mixer, apiKey]);
+
+      const getLUFSStatus = v => { const n = parseFloat(v); return n > -10 ? "danger" : (n > -12 || n < -18) ? "warning" : "good"; };
+      const getLRAStatus  = v => { const n = parseFloat(v); return n < 4 ? "danger" : n > 14 ? "warning" : "good"; };
+      const getPeakStatus = v => { const n = parseFloat(v); return n > -0.5 ? "danger" : n > -1 ? "warning" : "good"; };
+
+      if (step === 0) return <MixerSelect onContinue={(m, k) => { setMixer(m); setApiKey(k); setStep(1); }} />;
+      if (step === 1 || (isAnalyzing && step !== 2)) return (
+        <>
+          {(isAnalyzing || isGettingAI)
+            ? <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+                <div style={{ width: 48, height: 48, border: `3px solid ${C.border}`, borderTop: `3px solid ${C.primary}`, borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                <p style={{ fontSize: 14, color: C.textDim }}>{progress}</p>
+              </div>
+            : <UploadScreen mixer={mixer} onFile={handleFile} onChangeMixer={() => { setStep(0); setAnalysis(null); setAiSuggestions(null); }} />
+          }
+        </>
+      );
+
+      // ── Results screen
+      return (
+        <div className="fade-up" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+          {/* Header */}
+          <div style={{ background: `linear-gradient(135deg, ${C.surface} 0%, ${C.bg} 100%)`, borderBottom: `1px solid ${C.border}`, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10, backdropFilter: "blur(10px)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>🎛</div>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: -0.3 }}>MixCheck AI</h1>
+                <p style={{ margin: 0, fontSize: 10, color: C.textMuted }}>Worship Audio Analyzer</p>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ background: `${C.accent}15`, border: `1px solid ${C.accent}30`, borderRadius: 8, padding: "5px 12px" }}>
+                <span style={{ fontSize: 10, color: C.accent, fontWeight: 600 }}>🎚 {mixer}</span>
+              </div>
+              {analysis && (
+                <button
+                  onClick={() => generatePDF(analysis, aiSuggestions, audioFile?.name || "audio", mixer)}
+                  style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, border: "none", borderRadius: 8, color: "#fff", fontSize: 11, fontWeight: 700, padding: "7px 14px", cursor: "pointer", letterSpacing: 0.2 }}
+                >
+                  ⬇ PDF Report
+                </button>
+              )}
+              <button onClick={() => { setStep(0); setAnalysis(null); setAiSuggestions(null); setAudioFile(null); setAiError(false); }}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, color: C.textDim, fontSize: 11, padding: "7px 12px", cursor: "pointer" }}>
+                New File
+              </button>
+            </div>
+          </div>
+
+          <div style={{ padding: "18px 16px", maxWidth: 660, margin: "0 auto" }}>
+            {/* File info */}
+            {audioFile && analysis && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 14px", background: C.surface, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 18 }}>📄</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{audioFile.name}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted }}>{analysis.duration}s  •  {analysis.sampleRate} Hz  •  {analysis.channels}ch  •  {analysis.bitDepth}</div>
+                </div>
+              </div>
+            )}
+
+            {analysis && (
+              <>
+                {/* Waveform */}
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Waveform</div>
+                  <Waveform data={analysis.waveform} />
+                </div>
+
+                {/* Metrics */}
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 7 }}>
+                  <Metric label="Loudness" value={analysis.estimatedLUFS} unit="LUFS" status={getLUFSStatus(analysis.estimatedLUFS)} />
+                  <Metric label="True Peak" value={analysis.peakDb} unit="dBFS" status={getPeakStatus(analysis.peakDb)} />
+                  <Metric label="LRA" value={analysis.estimatedLRA} unit="LU" status={getLRAStatus(analysis.estimatedLRA)} />
+                </div>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
+                  <Metric label="Crest Factor" value={analysis.crestFactor} unit="dB" status="neutral" />
+                  <Metric label="Stereo Width" value={analysis.stereoWidth} unit="%" status="neutral" />
+                  <Metric label="RMS" value={analysis.rmsDb} unit="dBFS" status="neutral" />
+                </div>
+
+                {/* Flags */}
+                {(analysis.isClipping || analysis.isTooLoud || analysis.isTooQuiet || analysis.isOverCompressed || analysis.isUnderCompressed) && (
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 14 }}>
+                    {analysis.isClipping && <span style={{ background: `${C.danger}20`, color: C.danger, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>⚠ CLIPPING</span>}
+                    {analysis.isTooLoud && <span style={{ background: `${C.warning}20`, color: C.warning, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>🔊 TOO LOUD</span>}
+                    {analysis.isTooQuiet && <span style={{ background: `${C.warning}20`, color: C.warning, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>🔇 TOO QUIET</span>}
+                    {analysis.isOverCompressed && <span style={{ background: `${C.danger}20`, color: C.danger, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>💥 OVER-COMPRESSED</span>}
+                    {analysis.isUnderCompressed && <span style={{ background: `${C.warning}20`, color: C.warning, fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>📈 WIDE DYNAMICS</span>}
+                  </div>
+                )}
+
+                {/* Frequency */}
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Frequency Spectrum</div>
+                  <FreqBars bandAnalysis={analysis.bandAnalysis} />
+                </div>
+              </>
+            )}
+
+            {/* AI loading */}
+            {isGettingAI && (
+              <div style={{ background: C.surface, border: `1px solid ${C.primary}25`, borderRadius: 12, padding: 22, textAlign: "center", marginBottom: 14 }}>
+                <div style={{ width: 30, height: 30, border: `2px solid ${C.border}`, borderTop: `2px solid ${C.accent}`, borderRadius: "50%", margin: "0 auto 10px", animation: "spin 1s linear infinite" }} />
+                <p style={{ fontSize: 12, color: C.textDim }}>AI is generating your mixer-specific report...</p>
+              </div>
+            )}
+
+            {/* AI error */}
+            {aiError && (
+              <div style={{ background: C.surface, border: `1px solid ${C.warning}35`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                <p style={{ fontSize: 12, color: C.warning, margin: "0 0 6px", fontWeight: 600 }}>⚠ AI suggestions failed</p>
+                <p style={{ fontSize: 11, color: C.textDim, margin: "0 0 6px", fontFamily: "monospace", background: C.bg, padding: "6px 8px", borderRadius: 6 }}>{aiError}</p>
+                <p style={{ fontSize: 11, color: C.textMuted, margin: 0 }}>
+                  Make sure your API key is correct and starts with <code style={{ color: C.accent }}>sk-ant-</code>. Audio metrics above are still accurate — you can download a PDF with those.
+                </p>
+              </div>
+            )}
+
+            {aiSuggestions && (
+              <>
+                {/* Score */}
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, marginBottom: 14, display: "flex", alignItems: "center", gap: 18 }}>
+                  <ScoreRing score={aiSuggestions.overallScore} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 9, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>AI Mix Score</div>
+                    <p style={{ fontSize: 13, color: C.text, margin: "0 0 10px", lineHeight: 1.5 }}>{aiSuggestions.overallVerdict}</p>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+                      background: aiSuggestions.streamReadiness === "ready" ? `${C.accent}20` : aiSuggestions.streamReadiness === "needs work" ? `${C.warning}20` : `${C.danger}20`,
+                      color: aiSuggestions.streamReadiness === "ready" ? C.accent : aiSuggestions.streamReadiness === "needs work" ? C.warning : C.danger,
+                    }}>
+                      Stream: {(aiSuggestions.streamReadiness || "").toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Issues */}
+                {aiSuggestions.issues?.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Issues & Fixes</div>
+                    {aiSuggestions.issues.map((issue, i) => <IssueCard key={i} issue={issue} />)}
+                  </div>
+                )}
+
+                {/* EQ */}
+                {aiSuggestions.eqSuggestions?.length > 0 && (
+                  <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>EQ Suggestions</div>
+                    {aiSuggestions.eqSuggestions.map((eq, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: i < aiSuggestions.eqSuggestions.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 4, minWidth: 46, textAlign: "center", background: eq.action === "boost" ? `${C.accent}20` : `${C.danger}20`, color: eq.action === "boost" ? C.accent : C.danger }}>
+                          {eq.action === "boost" ? "↑" : "↓"} {eq.amount}
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: C.primary, minWidth: 55 }}>{eq.frequency}</span>
+                        <span style={{ fontSize: 10.5, color: C.textDim, flex: 1 }}>{eq.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Compression */}
+                {aiSuggestions.compressionNotes && (
+                  <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>Compression Notes</div>
+                    <p style={{ fontSize: 11.5, color: C.textDim, margin: 0, lineHeight: 1.6 }}>{aiSuggestions.compressionNotes}</p>
+                  </div>
+                )}
+
+                {/* Mixer Guide */}
+                {aiSuggestions.mixerGuide?.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: C.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, fontWeight: 700 }}>
+                      🎚 {mixer} — Step-by-Step Fix Guide
+                    </div>
+                    {aiSuggestions.mixerGuide.map((s, i) => (
+                      <div key={i} style={{ background: C.surface, border: `1px solid ${C.accent}25`, borderRadius: 10, padding: 14, marginBottom: 8, display: "flex", gap: 12 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: "50%", background: C.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: C.bg }}>{s.step}</span>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>{s.title}</div>
+                          <div style={{ fontSize: 10.5, color: C.accent, marginBottom: 5 }}>📍 {s.location}</div>
+                          <div style={{ fontSize: 11, color: C.textDim, lineHeight: 1.6 }}>{s.action}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Logic Pro Tips */}
+                {aiSuggestions.logicProTips?.length > 0 && (
+                  <div style={{ background: C.surface, border: `1px solid ${C.primary}25`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: C.primary, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, fontWeight: 700 }}>Logic Pro Tips</div>
+                    {aiSuggestions.logicProTips.map((tip, i) => (
+                      <div key={i} style={{ display: "flex", gap: 7, marginBottom: 7 }}>
+                        <span style={{ color: C.accent, fontSize: 11 }}>→</span>
+                        <span style={{ fontSize: 11, color: C.textDim, lineHeight: 1.5 }}>{tip}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* PDF CTA */}
+                <div style={{ background: `linear-gradient(135deg, ${C.primary}18, ${C.accent}10)`, border: `1px solid ${C.primary}30`, borderRadius: 14, padding: 18, textAlign: "center", marginBottom: 24 }}>
+                  <p style={{ fontSize: 13, color: C.text, marginBottom: 12 }}>
+                    📄 Your full analysis report is ready — download it to keep, share, or reference during your next service.
+                  </p>
+                  <button
+                    onClick={() => generatePDF(analysis, aiSuggestions, audioFile?.name || "audio", mixer)}
+                    style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, border: "none", borderRadius: 10, color: "#fff", fontSize: 13, fontWeight: 700, padding: "12px 28px", cursor: "pointer", letterSpacing: 0.3 }}
+                  >
+                    ⬇ Download PDF Report
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* PDF CTA even without AI (analysis only) */}
+            {aiError && analysis && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 24 }}>
+                <p style={{ fontSize: 12, color: C.textDim, marginBottom: 10 }}>Download a PDF with your audio metrics and frequency analysis.</p>
+                <button
+                  onClick={() => generatePDF(analysis, null, audioFile?.name || "audio", mixer)}
+                  style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, fontWeight: 600, padding: "9px 20px", cursor: "pointer" }}
+                >
+                  ⬇ Download Analysis PDF
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function Root() {
+      if (window.location.protocol === "file:") {
+        return (
+          <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+            <div style={{ maxWidth: 480, textAlign: "center" }}>
+              <div style={{ fontSize: 56, marginBottom: 20 }}>🚫</div>
+              <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12, color: C.danger }}>Opened as a file — AI won't work</h2>
+              <p style={{ fontSize: 13, color: C.textDim, lineHeight: 1.7, marginBottom: 24 }}>
+                Safari is blocking the AI API because you opened this as a <code style={{ color: C.warning, background: C.surface, padding: "1px 5px", borderRadius: 4 }}>file://</code> link.<br /><br />
+                To use MixCheck AI properly, launch it through the app instead:
+              </p>
+              <div style={{ background: C.surface, border: `1px solid ${C.accent}30`, borderRadius: 14, padding: 20, marginBottom: 20, textAlign: "left" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+                  <span style={{ background: C.accent, color: C.bg, borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0 }}>1</span>
+                  <span style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6 }}>Close this tab</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+                  <span style={{ background: C.accent, color: C.bg, borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0 }}>2</span>
+                  <span style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6 }}>Open <strong style={{ color: C.text }}>Finder</strong> → go to <code style={{ color: C.primary, background: C.bg, padding: "1px 5px", borderRadius: 4 }}>/Users/bryanrana/Music/listener</code></span>
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <span style={{ background: C.accent, color: C.bg, borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0 }}>3</span>
+                  <span style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6 }}>Double-click <strong style={{ color: C.text }}>MixCheckAI.app</strong> — it starts the server and opens the app automatically</span>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: C.textMuted }}>
+                The app launches a local server so the AI API works securely without any CORS issues.
+              </p>
+            </div>
+          </div>
+        );
+      }
+      return <App />;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+  </script>
+</body>
+</html>
