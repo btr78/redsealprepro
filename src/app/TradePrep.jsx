@@ -224,6 +224,7 @@ export default function TradePrep() {
   const [activateLoading, setActivateLoading] = useState(false);
   const [activateError, setActivateError]   = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [showWrong, setShowWrong] = useState(false);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
   const [stats, setStats] = useState({ sessions: 0, attempted: 0, correct: 0, best: 0 });
@@ -491,8 +492,17 @@ export default function TradePrep() {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMsgs, questionContext })
+        body: JSON.stringify({
+          messages: newMsgs,
+          questionContext,
+          token: typeof window !== "undefined" ? localStorage.getItem("rsp_token") : null,
+          trade: trade ? { id: trade.id, name: trade.name } : null,
+        })
       });
+      if (resp.status === 401) {
+        setChat(c => ({ ...c, messages: [...c.messages, { role: "ai", text: "🔒 AI Tutor is a Pro feature. Subscribe to unlock unlimited tutoring." }], loading: false }));
+        return;
+      }
       const data = await resp.json();
       const aiText = data.text || "I couldn't process that. Try again.";
       setChat(c => ({ ...c, messages: [...c.messages, { role: "ai", text: aiText }], loading: false }));
@@ -647,7 +657,9 @@ export default function TradePrep() {
             RedSeal Prep is an independent study tool and is not affiliated with, endorsed by, or sponsored by the Canadian Council of Directors of Apprenticeship (CCDA), the Red Seal Program, or any provincial/territorial apprenticeship authority. &quot;Red Seal&quot; refers to the Interprovincial Standards Red Seal Program. All practice questions are original content created for exam preparation purposes.
           </p>
           <p style={{ fontSize: 10, color: "rgba(139,148,158,0.5)" }}>
-            © {new Date().getFullYear()} RedSeal Prep. All rights reserved. &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Terms</span> &nbsp;|&nbsp; <span style={{ cursor: "pointer" }}>Privacy</span>
+            © {new Date().getFullYear()} RedSeal Prep. All rights reserved. &nbsp;|&nbsp;
+            <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: "rgba(139,148,158,0.5)", textDecoration: "none", cursor: "pointer" }}> Terms</a> &nbsp;|&nbsp;
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: "rgba(139,148,158,0.5)", textDecoration: "none", cursor: "pointer" }}>Privacy</a>
           </p>
         </div>
       </div>
@@ -929,7 +941,7 @@ export default function TradePrep() {
           {/* Actions */}
           {quiz.answered && (
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button onClick={() => setChat(c => ({ ...c, open: true }))} style={{ ...btn(false), flex: "0 0 auto", width: "auto", padding: "14px 16px", fontSize: 18 }}>🤖</button>
+              {sub && <button onClick={() => setChat(c => ({ ...c, open: true }))} style={{ ...btn(false), flex: "0 0 auto", width: "auto", padding: "14px 16px", fontSize: 18 }}>🤖</button>}
               <button onClick={nextQ} style={{ ...btn(true), flex: 1 }}>
                 {quiz.idx < quiz.questions.length - 1 ? "Next →" : "See Results →"}
               </button>
@@ -974,7 +986,6 @@ export default function TradePrep() {
   if (page === "results" && quiz) {
     const pct = Math.round((quiz.score / quiz.questions.length) * 100);
     const passed = pct >= 70;
-    const [showWrong, setShowWrong] = useState(false);
 
     const catBreak = getCategories().map(cat => {
       const qs = quiz.answers.filter(a => quiz.questions.find(q => q.id === a.qId)?.cat === cat.id);
@@ -1054,7 +1065,7 @@ export default function TradePrep() {
                     <span style={{ color: T.red, fontWeight: 700 }}>{c.pct}%</span>
                   </div>
                 ))}
-                <button onClick={() => startQuiz("weak")} style={{ ...btn(true), marginTop: 8, padding: "10px 16px", fontSize: 13 }}>🎯 Drill Weakest Category</button>
+                <button onClick={() => sub ? startQuiz("weak") : setPage("landing")} style={{ ...btn(true), marginTop: 8, padding: "10px 16px", fontSize: 13 }}>🎯 Drill Weakest Category</button>
               </div>
             );
           })()}
