@@ -213,8 +213,17 @@ const T = {
 // ─── MAIN APP ───────────────────────────────────────────────
 export default function TradePrep() {
   const [page, setPage] = useState("landing");
-  const [sub, setSub] = useState(false); // subscribed
+  // Optimistic: treat stored token as subscribed until server says otherwise
+  const [sub, setSub] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!localStorage.getItem("rsp_token");
+  });
   const [trade, setTrade] = useState(null);
+  const [showActivate, setShowActivate]     = useState(false);
+  const [activateEmail, setActivateEmail]   = useState("");
+  const [activateLoading, setActivateLoading] = useState(false);
+  const [activateError, setActivateError]   = useState("");
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
   const [stats, setStats] = useState({ sessions: 0, attempted: 0, correct: 0, best: 0 });
@@ -278,30 +287,76 @@ export default function TradePrep() {
   const timerRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // Load stats
+  // Load stats + verify subscription server-side
   useEffect(() => {
     (async () => {
       try {
-        const r = { value: localStorage.getItem("tp-stats") };
-        if (r?.value) setStats(JSON.parse(r.value));
+        const raw = localStorage.getItem("tp-stats");
+        if (raw) setStats(JSON.parse(raw));
       } catch(e) {}
-      try {
-        const r = { value: localStorage.getItem("tp-sub") };
-        if (r?.value === "true") setSub(true);
-      // Check Stripe success redirect
+
+      // Stripe success redirect → show email activation modal
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         if (params.get("sub") === "success") {
-          setSub(true);
-          localStorage.setItem("tp-sub", "true");
           window.history.replaceState({}, "", window.location.pathname);
+          setSub(false);
+          localStorage.removeItem("rsp_token");
+          setShowActivate(true);
+          return;
         }
       }
-      } catch(e) {}
+
+      // Verify stored token against server
+      const token = localStorage.getItem("rsp_token");
+      if (token) {
+        try {
+          const res = await fetch("/api/verify-subscription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+          const data = await res.json();
+          if (data.subscribed) {
+            setSub(true);
+            if (data.token) localStorage.setItem("rsp_token", data.token);
+          } else {
+            setSub(false);
+            localStorage.removeItem("rsp_token");
+          }
+        } catch {
+          // Network error — keep optimistic state, will re-check next load
+        }
+      }
     })();
   }, []);
 
   const saveStats = async (s) => { try { localStorage.setItem("tp-stats", JSON.stringify(s)); } catch(e) {} };
+
+  const activateSubscription = async () => {
+    if (!activateEmail.includes("@")) { setActivateError("Enter the email you used at checkout."); return; }
+    setActivateLoading(true);
+    setActivateError("");
+    try {
+      const res = await fetch("/api/verify-subscription", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activateEmail }),
+      });
+      const data = await res.json();
+      if (data.subscribed && data.token) {
+        localStorage.setItem("rsp_token", data.token);
+        setSub(true);
+        setShowActivate(false);
+      } else {
+        setActivateError("No active subscription found for that email. Check the email used at checkout, or contact support@redsealprep.pro");
+      }
+    } catch {
+      setActivateError("Connection error. Please try again.");
+    } finally {
+      setActivateLoading(false);
+    }
+  };
 
   // Timer
   useEffect(() => {
@@ -545,6 +600,8 @@ export default function TradePrep() {
               </div>
             ))}
             <button onClick={async () => {
+              if (checkoutLoading) return;
+              setCheckoutLoading(true);
               try {
                 const res = await fetch("/api/stripe/checkout", {
                   method: "POST",
@@ -555,7 +612,16 @@ export default function TradePrep() {
                 if (data.url) window.location.href = data.url;
                 else alert("Payment setup error. Please try again.");
               } catch (e) { alert("Connection error. Please try again."); }
-            }} style={{ ...btn(true), marginTop: 20 }}>Start 7-Day Free Trial →</button>
+              finally { setCheckoutLoading(false); }
+            }} disabled={checkoutLoading} style={{ ...btn(true), marginTop: 20, opacity: checkoutLoading ? 0.7 : 1 }}>
+              {checkoutLoading ? "Loading..." : "Start 7-Day Free Trial →"}
+            </button>
+            <p style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: T.text2 }}>
+              Already subscribed?{" "}
+              <span onClick={() => setShowActivate(true)} style={{ color: T.accent, cursor: "pointer", textDecoration: "underline" }}>
+                Restore access →
+              </span>
+            </p>
           </div>
         </div>
       </div>
@@ -585,6 +651,48 @@ export default function TradePrep() {
           </p>
         </div>
       </div>
+
+      {/* ACTIVATION MODAL */}
+      {showActivate && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
+            <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>🎉</div>
+            <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Activate Your Pro Access</h2>
+            <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+              Enter the email you used at checkout. We&apos;ll verify your subscription and unlock full access.
+            </p>
+            <input
+              type="email"
+              value={activateEmail}
+              onChange={e => { setActivateEmail(e.target.value); setActivateError(""); }}
+              onKeyDown={e => e.key === "Enter" && activateSubscription()}
+              placeholder="your@email.com"
+              autoFocus
+              style={{
+                width: "100%", background: T.surface,
+                border: `1px solid ${activateError ? T.red : T.border}`,
+                borderRadius: 10, padding: "14px 16px", color: T.text,
+                fontSize: 15, fontFamily: T.font, outline: "none",
+                boxSizing: "border-box", marginBottom: activateError ? 8 : 16,
+              }}
+            />
+            {activateError && (
+              <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{activateError}</p>
+            )}
+            <button
+              onClick={activateSubscription}
+              disabled={activateLoading}
+              style={{ ...btn(true), opacity: activateLoading ? 0.7 : 1 }}
+            >
+              {activateLoading ? "Verifying..." : "Activate Pro Access →"}
+            </button>
+            <p style={{ textAlign: "center", color: T.text2, fontSize: 12, marginTop: 16 }}>
+              Issues? Email{" "}
+              <a href="mailto:support@redsealprep.pro" style={{ color: T.accent }}>support@redsealprep.pro</a>
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 
