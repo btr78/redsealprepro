@@ -9,6 +9,7 @@ import { QUESTIONS_307A, CATEGORIES_307A } from "./questions307A";
 import { QUESTIONS_403A, CATEGORIES_403A } from "./questions403A";
 import { QUESTIONS_310S, CATEGORIES_310S } from "./questions310S";
 import { QUESTIONS_456A, CATEGORIES_456A } from "./questions456A";
+import { supabase, loadCloudProgress, saveCloudProgress, applyProgress } from "./supabaseClient";
 
 // ═══════════════════════════════════════════════════════════════
 // TRADEPREP PRO — Red Seal Exam Prep SaaS
@@ -232,6 +233,13 @@ export default function TradePrep() {
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
   const [stats, setStats] = useState({ sessions: 0, attempted: 0, correct: 0, best: 0 });
   const [hovered, setHovered] = useState(null);
+  // ─── ACCOUNTS (Supabase magic-link + cross-device progress) ───
+  const [authUser, setAuthUser]   = useState(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authSent, setAuthSent]   = useState(false);
+  const [authBusy, setAuthBusy]   = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [authErr, setAuthErr]     = useState("");
 
   // ─── SPACED REPETITION & STREAK ───────────────────────────
   const [wrongBank, setWrongBank] = useState(() => {
@@ -334,6 +342,40 @@ export default function TradePrep() {
       }
     })();
   }, []);
+
+  // ─── Supabase auth + cross-device progress hydration ───
+  useEffect(() => {
+    if (!supabase) return;
+    const hydrate = async (user) => {
+      setAuthUser(user || null);
+      if (!user) return;
+      const cloud = await loadCloudProgress(user.id);
+      if (cloud && Object.keys(cloud).length) {
+        applyProgress(cloud);                       // pull their saved progress onto this device
+        try { const s = localStorage.getItem("tp-stats"); if (s) setStats(JSON.parse(s)); } catch {}
+        try { const st = localStorage.getItem("rsp_streak"); if (st) setStreak(JSON.parse(st)); } catch {}
+        try { setWrongBank(JSON.parse(localStorage.getItem("rsp_wrong_" + (trade?.id || "")) || "{}")); } catch {}
+      } else {
+        saveCloudProgress(user.id);                 // first sign-in: push whatever's already local
+      }
+    };
+    supabase.auth.getSession().then(({ data }) => hydrate(data?.session?.user));
+    const { data } = supabase.auth.onAuthStateChange((_e, session) => { setShowSignIn(false); setAuthSent(false); hydrate(session?.user); });
+    return () => data?.subscription?.unsubscribe();
+  }, []);
+
+  const sendMagicLink = async () => {
+    if (!supabase) { setAuthErr("Sign-in isn't enabled yet."); return; }
+    if (!authEmail.includes("@")) { setAuthErr("Enter a valid email."); return; }
+    setAuthBusy(true); setAuthErr("");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email: authEmail.trim(), options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined } });
+      if (error) setAuthErr(error.message); else setAuthSent(true);
+    } catch { setAuthErr("Couldn't send the link — try again."); }
+    finally { setAuthBusy(false); }
+  };
+  const signOut = async () => { try { await supabase?.auth.signOut(); } catch {} setAuthUser(null); };
+  const syncCloud = () => { if (authUser && supabase) saveCloudProgress(authUser.id); };
 
   const saveStats = async (s) => { try { localStorage.setItem("tp-stats", JSON.stringify(s)); } catch(e) {} };
 
@@ -476,6 +518,7 @@ export default function TradePrep() {
       const finalAnswers = [...quiz.answers, { qId: quiz.questions[quiz.idx].id, sel: quiz.selected, ok: quiz.selected === quiz.questions[quiz.idx].ans }];
       saveWrong(trade?.id, finalAnswers, quiz.questions);
       saveCatPerf(trade?.id, finalAnswers, quiz.questions);
+      syncCloud();   // push this session's progress to the signed-in account (if any)
       setQuiz(q => ({ ...q, running: false }));
       setPage("results");
     }
@@ -536,7 +579,12 @@ export default function TradePrep() {
           <div style={{ width: 32, height: 32, background: `linear-gradient(135deg, ${T.accent}, #e65100)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>⚙️</div>
           <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.3px" }}>RedSeal<span style={{ color: T.accent }}>Prep</span></span>
         </div>
-        <button onClick={() => setPage("trades")} style={{ ...btn(true), width: "auto", padding: "10px 20px", fontSize: 13 }}>Start Free →</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {supabase && (authUser
+            ? <button onClick={signOut} style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.text2, borderRadius: 8, padding: "9px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>✓ {(authUser.email||"").split("@")[0]} · Sign out</button>
+            : <button onClick={() => { setShowSignIn(true); setAuthSent(false); setAuthErr(""); }} style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>Sign in</button>)}
+          <button onClick={() => setPage("trades")} style={{ ...btn(true), width: "auto", padding: "10px 20px", fontSize: 13 }}>Start Free →</button>
+        </div>
       </div>
 
       {/* HERO */}
@@ -705,6 +753,43 @@ export default function TradePrep() {
               Issues? Email{" "}
               <a href="mailto:support@redsealprep.pro" style={{ color: T.accent }}>support@redsealprep.pro</a>
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* SIGN-IN MODAL — Supabase magic link */}
+      {showSignIn && (
+        <div onClick={() => setShowSignIn(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
+            {authSent ? (
+              <>
+                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>✉️</div>
+                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Check your email</h2>
+                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
+                  We sent a sign-in link to <b style={{ color: T.text }}>{authEmail}</b>. Click it to log in — your progress will then sync across all your devices.
+                </p>
+                <button onClick={() => setShowSignIn(false)} style={{ ...btn(true) }}>Done</button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>☁️</div>
+                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Save your progress</h2>
+                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+                  Sign in to keep your scores, streak, and weak spots — and pick up right where you left off on any device. No password; we just email you a link.
+                </p>
+                <input
+                  type="email" value={authEmail} autoFocus
+                  onChange={e => { setAuthEmail(e.target.value); setAuthErr(""); }}
+                  onKeyDown={e => e.key === "Enter" && sendMagicLink()}
+                  placeholder="your@email.com"
+                  style={{ width: "100%", background: T.surface, border: `1px solid ${authErr ? T.red : T.border}`, borderRadius: 10, padding: "14px 16px", color: T.text, fontSize: 15, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: authErr ? 8 : 16 }}
+                />
+                {authErr && <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{authErr}</p>}
+                <button onClick={sendMagicLink} disabled={authBusy} style={{ ...btn(true), opacity: authBusy ? 0.7 : 1 }}>
+                  {authBusy ? "Sending..." : "Email me a sign-in link →"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
