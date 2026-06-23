@@ -189,6 +189,9 @@ const QUESTIONS_433A = [
 
 // ─── UTILITIES ──────────────────────────────────────────────
 const shuffle = (a) => { const b=[...a]; for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];} return b; };
+// Randomize each question's answer positions (banks were authored with the correct option
+// almost always in slot B). Shuffle by index so duplicate option text can't break the remap.
+const shuffleOpts = (q) => { const order = shuffle(q.opts.map((_, i) => i)); return { ...q, opts: order.map(i => q.opts[i]), ans: order.indexOf(q.ans) }; };
 const hexRgb = (h) => { const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return `${r},${g},${b}`; };
 const fmtTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`;
 
@@ -443,7 +446,7 @@ export default function TradePrep() {
     }
 
     updateStreak();
-    setQuiz({ questions: shuffle(qs), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode, countdown });
+    setQuiz({ questions: shuffle(qs).map(shuffleOpts), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode, countdown });
     setPage("quiz");
   };
 
