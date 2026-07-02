@@ -17,8 +17,8 @@ export async function generateMetadata({ params }) {
   return {
     title, description,
     alternates: { canonical: url },
-    openGraph: { title, description, url, type: "website", siteName: "RedSeal Prep Pro" },
-    twitter: { card: "summary_large_image", title, description },
+    openGraph: { title, description, url, type: "website", siteName: "RedSeal Prep Pro", images: ["/opengraph-image"] },
+    twitter: { card: "summary_large_image", title, description, images: ["/opengraph-image"] },
   };
 }
 
