@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
         "payment_method_types[0]": "card",
         "line_items[0][price]": PRICE_ID,
         "line_items[0][quantity]": "1",
-        "success_url": "https://www.redsealprep.pro?sub=success",
+        "success_url": "https://www.redsealprep.pro?sub=success&session_id={CHECKOUT_SESSION_ID}",
         "cancel_url": "https://www.redsealprep.pro?sub=cancelled",
         "allow_promotion_codes": "true",
         "payment_method_collection": "always",

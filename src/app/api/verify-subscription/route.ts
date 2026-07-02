@@ -118,6 +118,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ subscribed: true, token: newToken, email: parsed.email });
     }
 
+    // ── Post-checkout auto-activation ──────────────────────────
+    // Checkout session IDs are high-entropy secrets Stripe reveals only via
+    // the buyer's success redirect, so possession proves they paid.
+    if (body.checkoutSessionId) {
+      const key = process.env.STRIPE_SECRET_KEY;
+      const sessionId = String(body.checkoutSessionId);
+      if (!key || !/^cs_[a-zA-Z0-9_]+$/.test(sessionId)) {
+        return NextResponse.json({ subscribed: false });
+      }
+      const sesRes = await fetch(
+        `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`,
+        { headers: { Authorization: `Bearer ${key}` } }
+      );
+      const ses = await sesRes.json();
+      const email = ses?.customer_details?.email;
+      const freshEnough = ses?.created && Date.now() / 1000 - ses.created < 24 * 60 * 60;
+      if (!sesRes.ok || ses.status !== "complete" || !email || !freshEnough) {
+        return NextResponse.json({ subscribed: false });
+      }
+      // Confirm the subscription created by this checkout is live
+      let active = false;
+      if (ses.subscription) {
+        const subRes = await fetch(
+          `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(String(ses.subscription))}`,
+          { headers: { Authorization: `Bearer ${key}` } }
+        );
+        const s = await subRes.json();
+        active = s?.status === "active" || s?.status === "trialing";
+      }
+      if (!active) return NextResponse.json({ subscribed: false });
+      const emailLc = String(email).toLowerCase();
+      return NextResponse.json({ subscribed: true, token: makeToken(emailLc, String(ses.customer ?? "")), email: emailLc });
+    }
+
     // ── Activation path — requires a signed-in Supabase session ──
     // (a bare email is NOT accepted: it would let anyone mint a token
     //  with a subscriber's address without proving they own it)

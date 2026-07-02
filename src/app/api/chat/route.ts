@@ -1,33 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 
-const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+const MAX_AGE   = 30 * 24 * 60 * 60 * 1000;
+const CACHE_TTL = 24 * 60 * 60 * 1000; // tokens older than this re-verify with Stripe
 
-function isValidToken(token: string): boolean {
+function parseToken(token: string): { email: string; iat: number } | null {
   try {
     const secret = process.env.ACTIVATION_SECRET;
-    if (!secret) return false;
+    if (!secret) return null;
     const dot = token.lastIndexOf(".");
-    if (dot < 0) return false;
+    if (dot < 0) return null;
     const payload = token.slice(0, dot);
     const sig     = token.slice(dot + 1);
     const expected = createHmac("sha256", secret).update(payload).digest("hex");
     const sigBuf = Buffer.from(sig,      "hex");
     const expBuf = Buffer.from(expected, "hex");
-    if (sigBuf.length !== expBuf.length) return false;
-    if (!timingSafeEqual(sigBuf, expBuf)) return false;
+    if (sigBuf.length !== expBuf.length) return null;
+    if (!timingSafeEqual(sigBuf, expBuf)) return null;
     const data = JSON.parse(Buffer.from(payload, "base64url").toString());
-    return Date.now() - data.iat <= MAX_AGE;
+    if (Date.now() - data.iat > MAX_AGE) return null;
+    return data;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// Stale tokens must re-prove an active subscription — otherwise a cancelled
+// subscriber could replay an old token here for the token's full 30-day life
+async function stripeStillActive(email: string): Promise<boolean> {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return false;
+  const cusRes = await fetch(
+    `https://api.stripe.com/v1/customers?email=${encodeURIComponent(email)}&limit=5`,
+    { headers: { Authorization: `Bearer ${key}` } }
+  );
+  const cusData = await cusRes.json();
+  for (const cus of (cusData.data ?? [])) {
+    const subRes = await fetch(
+      `https://api.stripe.com/v1/subscriptions?customer=${cus.id}&limit=10`,
+      { headers: { Authorization: `Bearer ${key}` } }
+    );
+    const subData = await subRes.json();
+    if ((subData.data ?? []).some(
+      (s: { status: string }) => s.status === "active" || s.status === "trialing"
+    )) return true;
+  }
+  return false;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const { messages, questionContext, token, trade } = await req.json();
 
-    if (!token || !isValidToken(token)) {
+    const parsed = token ? parseToken(String(token)) : null;
+    if (!parsed) {
+      return NextResponse.json(
+        { error: "Subscription required", code: "SUBSCRIBE" },
+        { status: 401 }
+      );
+    }
+    if (Date.now() - parsed.iat > CACHE_TTL && !(await stripeStillActive(parsed.email))) {
       return NextResponse.json(
         { error: "Subscription required", code: "SUBSCRIBE" },
         { status: 401 }

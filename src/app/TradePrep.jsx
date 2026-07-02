@@ -308,11 +308,28 @@ export default function TradePrep() {
         if (raw) setStats(JSON.parse(raw));
       } catch(e) {}
 
-      // Stripe success redirect → show email activation modal
+      // Stripe success redirect → auto-activate from the checkout session,
+      // falling back to the email-verification modal if that fails
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         if (params.get("sub") === "success") {
+          const checkoutSessionId = params.get("session_id");
           window.history.replaceState({}, "", window.location.pathname);
+          if (checkoutSessionId) {
+            try {
+              const res = await fetch("/api/verify-subscription", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ checkoutSessionId }),
+              });
+              const data = await res.json();
+              if (data.subscribed && data.token) {
+                localStorage.setItem("rsp_token", data.token);
+                setSub(true);
+                return;
+              }
+            } catch {}
+          }
           setSub(false);
           localStorage.removeItem("rsp_token");
           setShowActivate(true);
@@ -531,6 +548,17 @@ export default function TradePrep() {
       qs = shuffle(allQs).slice(0, 20);
     }
 
+    // Free tier: one 20-question session per day (any trade), as advertised
+    if (!sub) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem("rsp_free_day") === today) {
+        alert("That's your free 20 questions done for today — come back tomorrow, or go Pro for unlimited practice, every mode, and the AI tutor.");
+        setPage("landing");
+        return;
+      }
+      try { localStorage.setItem("rsp_free_day", today); } catch {}
+    }
+
     updateStreak();
     setQuiz({ questions: shuffle(qs).map(shuffleOpts), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode, countdown });
     setPage("quiz");
@@ -686,7 +714,7 @@ export default function TradePrep() {
             <div style={{ fontSize: 13, fontWeight: 700, color: T.text2, textTransform: "uppercase", letterSpacing: "2px", marginBottom: 8 }}>Free</div>
             <div style={{ fontSize: 36, fontWeight: 900, marginBottom: 4 }}>$0</div>
             <div style={{ fontSize: 13, color: T.text2, marginBottom: 20 }}>Try before you buy</div>
-            {["20 daily practice questions", "Basic score tracking", "1 trade (433A Millwright)"].map(f => (
+            {["20 free questions daily", "All 9 trades", "Score & streak tracking"].map(f => (
               <div key={f} style={{ fontSize: 13, color: T.text2, padding: "6px 0", display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: T.green }}>✓</span> {f}
               </div>
