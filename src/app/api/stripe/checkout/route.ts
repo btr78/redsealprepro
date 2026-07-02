@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
   try {
     const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
-    const PRICE_ID = process.env.STRIPE_PRICE_ID;
+    let plan = "monthly";
+    try { plan = (await req.json())?.plan === "annual" ? "annual" : "monthly"; } catch {}
+    const PRICE_ID = plan === "annual" ? process.env.STRIPE_PRICE_ID_ANNUAL : process.env.STRIPE_PRICE_ID;
 
     if (!STRIPE_SECRET || !PRICE_ID) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });

@@ -30,8 +30,43 @@ export default async function TradeLanding({ params }) {
   const t = findTrade(trade);
   if (!t) return null;
   const others = TRADES_SEO.filter((x) => x.slug !== t.slug);
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Course",
+        name: `${t.name} (${t.code}) Red Seal Practice Exam Prep`,
+        description: t.intro,
+        url: `https://www.redsealprep.pro/${t.slug}`,
+        provider: { "@type": "Organization", name: "RedSeal Prep Pro", url: "https://www.redsealprep.pro" },
+        offers: [{ "@type": "Offer", price: "0", priceCurrency: "CAD", category: "Free" }],
+        hasCourseInstance: [{ "@type": "CourseInstance", courseMode: "online" }],
+      },
+      {
+        "@type": "FAQPage",
+        mainEntity: [
+          {
+            "@type": "Question",
+            name: `Is this the official ${t.code} Red Seal exam?`,
+            acceptedAnswer: { "@type": "Answer", text: `No. RedSeal Prep Pro is an independent study tool with practice questions written in the style of the Certificate of Qualification. It is not affiliated with the Red Seal Program or your provincial certification body.` },
+          },
+          {
+            "@type": "Question",
+            name: `How many free ${t.short} practice questions do I get?`,
+            acceptedAnswer: { "@type": "Answer", text: `You get 20 free practice questions every day — no credit card required. Pro ($12 CAD/month) unlocks the full question bank, a timed exam simulator, spaced-repetition review of your mistakes, and an AI tutor that explains every answer.` },
+          },
+          {
+            "@type": "Question",
+            name: `What topics do the ${t.code} practice questions cover?`,
+            acceptedAnswer: { "@type": "Answer", text: `Questions follow the Red Seal NOA breakdown for ${t.name}, covering: ${t.topics.join(", ")}.` },
+          },
+        ],
+      },
+    ],
+  };
   return (
     <main style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", background: C.bg, color: C.text, minHeight: "100vh" }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <nav style={{ ...wrap, maxWidth: 1100, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
         <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", color: C.text }}>
           <span style={{ width: 30, height: 30, background: `linear-gradient(135deg, ${C.accent}, #e65100)`, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>⚙️</span>

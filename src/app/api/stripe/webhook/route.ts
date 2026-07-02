@@ -37,23 +37,46 @@ export async function POST(req: NextRequest) {
   }
 
   const event = JSON.parse(body);
+  const obj = event.data.object;
 
   switch (event.type) {
     case "checkout.session.completed":
-      console.log("Checkout completed:", event.data.object.customer_email);
+      console.log("Checkout completed:", obj.customer_email);
+      await notifyTelegram(`🎓 RedSeal Prep: new Pro subscriber — ${obj.customer_details?.email ?? obj.customer_email ?? "unknown"}`);
       break;
     case "customer.subscription.updated":
-      console.log(`Subscription ${event.data.object.id} → ${event.data.object.status}`);
+      console.log(`Subscription ${obj.id} → ${obj.status}`);
+      if (obj.cancel_at_period_end) {
+        await notifyTelegram(`⚠️ RedSeal Prep: subscription set to cancel at period end (${obj.id})`);
+      }
       break;
     case "customer.subscription.deleted":
-      console.log("Subscription cancelled:", event.data.object.customer);
+      console.log("Subscription cancelled:", obj.customer);
+      await notifyTelegram(`😢 RedSeal Prep: subscription cancelled (${obj.customer})`);
       break;
     case "invoice.payment_failed":
-      console.log("Payment failed:", event.data.object.customer_email);
+      console.log("Payment failed:", obj.customer_email);
+      await notifyTelegram(`💳 RedSeal Prep: payment FAILED — ${obj.customer_email ?? obj.customer ?? "unknown"}`);
       break;
     default:
       console.log("Unhandled event:", event.type);
   }
 
   return NextResponse.json({ received: true });
+}
+
+// Best-effort ping to Bryan's Telegram; never blocks the 200 back to Stripe
+async function notifyTelegram(text: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+  } catch (e) {
+    console.error("Telegram notify failed:", e);
+  }
 }

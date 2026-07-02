@@ -229,6 +229,9 @@ export default function TradePrep() {
   const [activateError, setActivateError]   = useState("");
   const [activateSent, setActivateSent]     = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  // Annual plan appears once NEXT_PUBLIC_ANNUAL_PRICE (+ STRIPE_PRICE_ID_ANNUAL) is configured
+  const ANNUAL_PRICE = process.env.NEXT_PUBLIC_ANNUAL_PRICE;
+  const [plan, setPlan] = useState("monthly");
   const [showWrong, setShowWrong] = useState(false);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
   const [chat, setChat] = useState({ open: false, messages: [], input: "", loading: false });
@@ -641,6 +644,43 @@ export default function TradePrep() {
   const wrap = { maxWidth: 800, margin: "0 auto", padding: "16px" };
 
   // ═══════════════════════════════════════════════════════════
+  // Sign-in modal — shared across pages (landing header + results nudge)
+  const signInModal = showSignIn && (
+    <div onClick={() => setShowSignIn(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
+        {authSent ? (
+          <>
+            <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>✉️</div>
+            <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Check your email</h2>
+            <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
+              We sent a sign-in link to <b style={{ color: T.text }}>{authEmail}</b>. Click it to log in — your progress will then sync across all your devices.
+            </p>
+            <button onClick={() => setShowSignIn(false)} style={{ ...btn(true) }}>Done</button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>☁️</div>
+            <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Save your progress</h2>
+            <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+              Sign in to keep your scores, streak, and weak spots — and pick up right where you left off on any device. No password; we just email you a link.
+            </p>
+            <input
+              type="email" value={authEmail} autoFocus
+              onChange={e => { setAuthEmail(e.target.value); setAuthErr(""); }}
+              onKeyDown={e => e.key === "Enter" && sendMagicLink()}
+              placeholder="your@email.com"
+              style={{ width: "100%", background: T.surface, border: `1px solid ${authErr ? T.red : T.border}`, borderRadius: 10, padding: "14px 16px", color: T.text, fontSize: 15, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: authErr ? 8 : 16 }}
+            />
+            {authErr && <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{authErr}</p>}
+            <button onClick={sendMagicLink} disabled={authBusy} style={{ ...btn(true), opacity: authBusy ? 0.7 : 1 }}>
+              {authBusy ? "Sending..." : "Email me a sign-in link →"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   // LANDING PAGE
   // ═══════════════════════════════════════════════════════════
   if (page === "landing") return (
@@ -725,7 +765,18 @@ export default function TradePrep() {
           <div style={{ background: `linear-gradient(135deg, rgba(255,107,53,0.08), rgba(255,167,38,0.04))`, border: `2px solid ${T.accent}`, borderRadius: 16, padding: 28, position: "relative" }}>
             <div style={{ position: "absolute", top: -12, right: 20, background: T.accent, color: "white", fontSize: 11, fontWeight: 800, padding: "4px 12px", borderRadius: 12 }}>MOST POPULAR</div>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.accent, textTransform: "uppercase", letterSpacing: "2px", marginBottom: 8 }}>Pro</div>
-            <div style={{ fontSize: 36, fontWeight: 900, marginBottom: 4 }}>$12<span style={{ fontSize: 16, color: T.text2 }}>/mo</span></div>
+            {ANNUAL_PRICE && (
+              <div style={{ display: "inline-flex", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, marginBottom: 10 }}>
+                {[["monthly", "Monthly"], ["annual", `Annual · save ${Math.round((1 - Number(ANNUAL_PRICE) / 144) * 100)}%`]].map(([p, label]) => (
+                  <button key={p} onClick={() => setPlan(p)} style={{ background: plan === p ? T.accent : "transparent", color: plan === p ? "#fff" : T.text2, border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {plan === "annual" && ANNUAL_PRICE
+              ? <div style={{ fontSize: 36, fontWeight: 900, marginBottom: 4 }}>${ANNUAL_PRICE}<span style={{ fontSize: 16, color: T.text2 }}>/yr</span></div>
+              : <div style={{ fontSize: 36, fontWeight: 900, marginBottom: 4 }}>$12<span style={{ fontSize: 16, color: T.text2 }}>/mo</span></div>}
             <div style={{ fontSize: 13, color: T.text2, marginBottom: 20 }}>Everything you need to prepare</div>
             {["All 135+ questions per trade", "Full exam simulation (timed)", "AI Tutor — unlimited questions", "Category deep-dive mode", "Hard mode (critical thinking)", "Progress analytics", "All trades included", "New questions added monthly"].map(f => (
               <div key={f} style={{ fontSize: 13, color: T.text, padding: "6px 0", display: "flex", gap: 8, alignItems: "center" }}>
@@ -739,7 +790,7 @@ export default function TradePrep() {
                 const res = await fetch("/api/stripe/checkout", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({})
+                  body: JSON.stringify({ plan })
                 });
                 const data = await res.json();
                 if (data.url) window.location.href = data.url;
@@ -847,41 +898,7 @@ export default function TradePrep() {
       )}
 
       {/* SIGN-IN MODAL — Supabase magic link */}
-      {showSignIn && (
-        <div onClick={() => setShowSignIn(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
-            {authSent ? (
-              <>
-                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>✉️</div>
-                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Check your email</h2>
-                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
-                  We sent a sign-in link to <b style={{ color: T.text }}>{authEmail}</b>. Click it to log in — your progress will then sync across all your devices.
-                </p>
-                <button onClick={() => setShowSignIn(false)} style={{ ...btn(true) }}>Done</button>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>☁️</div>
-                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Save your progress</h2>
-                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
-                  Sign in to keep your scores, streak, and weak spots — and pick up right where you left off on any device. No password; we just email you a link.
-                </p>
-                <input
-                  type="email" value={authEmail} autoFocus
-                  onChange={e => { setAuthEmail(e.target.value); setAuthErr(""); }}
-                  onKeyDown={e => e.key === "Enter" && sendMagicLink()}
-                  placeholder="your@email.com"
-                  style={{ width: "100%", background: T.surface, border: `1px solid ${authErr ? T.red : T.border}`, borderRadius: 10, padding: "14px 16px", color: T.text, fontSize: 15, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: authErr ? 8 : 16 }}
-                />
-                {authErr && <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{authErr}</p>}
-                <button onClick={sendMagicLink} disabled={authBusy} style={{ ...btn(true), opacity: authBusy ? 0.7 : 1 }}>
-                  {authBusy ? "Sending..." : "Email me a sign-in link →"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {signInModal}
     </div>
   );
 
@@ -1254,11 +1271,22 @@ export default function TradePrep() {
             </button>
           )}
 
+          {/* Email capture — nudge anonymous users to save this result */}
+          {supabase && !authUser && (
+            <div style={{ background: "rgba(88,166,255,0.06)", border: "1px solid rgba(88,166,255,0.2)", borderRadius: 10, padding: 14, marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: T.text2, lineHeight: 1.5 }}>
+                <b style={{ color: T.text }}>☁️ Don&apos;t lose this progress.</b> Sign in free to keep your scores and streak on any device.
+              </div>
+              <button onClick={() => setShowSignIn(true)} style={{ ...btn(false), width: "auto", padding: "9px 16px", fontSize: 12, whiteSpace: "nowrap" }}>Sign in free →</button>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button onClick={() => { setQuiz(null); setPage("dashboard"); }} style={{ ...btn(false), flex: 1 }}>← Dashboard</button>
             <button onClick={() => startQuiz("daily")} style={{ ...btn(true), flex: 1 }}>🔄 Quick 20</button>
           </div>
         </div>
+        {signInModal}
       </div>
     );
   }
