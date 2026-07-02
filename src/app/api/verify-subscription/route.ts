@@ -5,6 +5,22 @@ const SECRET = process.env.ACTIVATION_SECRET!;
 const CACHE_TTL = 24 * 60 * 60 * 1000;   // re-check Stripe after 24h
 const MAX_AGE  = 30 * 24 * 60 * 60 * 1000; // hard-expire token after 30 days
 
+// ── Rate limiting (in-memory; Fluid Compute reuses instances) ──
+const hits = new Map<string, { n: number; t: number }>();
+const RL_WINDOW = 60_000;
+const RL_LIMIT  = 10;
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  if (hits.size > 5000) {
+    for (const [k, v] of hits) if (now - v.t > RL_WINDOW) hits.delete(k);
+  }
+  const h = hits.get(ip);
+  if (!h || now - h.t > RL_WINDOW) { hits.set(ip, { n: 1, t: now }); return false; }
+  h.n++;
+  return h.n > RL_LIMIT;
+}
+
 function sign(data: string): string {
   return createHmac("sha256", SECRET).update(data).digest("hex");
 }
@@ -29,6 +45,23 @@ function parseToken(token: string): { email: string; customerId: string; iat: nu
     const data = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (Date.now() - data.iat > MAX_AGE) return null;
     return data;
+  } catch {
+    return null;
+  }
+}
+
+// Resolve a Supabase session token to its verified email — proof the caller owns the address
+async function supabaseEmail(accessToken: string): Promise<string | null> {
+  const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+  try {
+    const res = await fetch(`${url}/auth/v1/user`, {
+      headers: { apikey: anon, Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const user = await res.json();
+    return user?.email ? String(user.email).toLowerCase() : null;
   } catch {
     return null;
   }
@@ -60,6 +93,11 @@ async function checkStripe(email: string): Promise<{ active: boolean; customerId
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = (req.headers.get("x-forwarded-for") ?? "unknown").split(",")[0].trim();
+    if (rateLimited(ip)) {
+      return NextResponse.json({ error: "Too many attempts — try again in a minute" }, { status: 429 });
+    }
+
     const body = await req.json();
 
     // ── Token refresh path ─────────────────────────────────────
@@ -80,15 +118,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ subscribed: true, token: newToken, email: parsed.email });
     }
 
-    // ── Email verification path ────────────────────────────────
-    if (!body.email || !String(body.email).includes("@")) {
-      return NextResponse.json({ error: "Valid email required" }, { status: 400 });
+    // ── Activation path — requires a signed-in Supabase session ──
+    // (a bare email is NOT accepted: it would let anyone mint a token
+    //  with a subscriber's address without proving they own it)
+    if (body.supabaseToken) {
+      const email = await supabaseEmail(String(body.supabaseToken));
+      if (!email) {
+        return NextResponse.json({ error: "Sign-in expired — please sign in again", code: "SIGNIN" }, { status: 401 });
+      }
+      const { active, customerId } = await checkStripe(email);
+      if (!active || !customerId) return NextResponse.json({ subscribed: false, email });
+      return NextResponse.json({ subscribed: true, token: makeToken(email, customerId), email });
     }
-    const email = String(body.email).toLowerCase().trim();
-    const { active, customerId } = await checkStripe(email);
-    if (!active || !customerId) return NextResponse.json({ subscribed: false });
-    const token = makeToken(email, customerId);
-    return NextResponse.json({ subscribed: true, token, email });
+
+    return NextResponse.json({ error: "Sign-in required", code: "SIGNIN" }, { status: 401 });
 
   } catch (err) {
     console.error("verify-subscription error:", err);

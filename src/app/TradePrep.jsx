@@ -227,6 +227,7 @@ export default function TradePrep() {
   const [activateEmail, setActivateEmail]   = useState("");
   const [activateLoading, setActivateLoading] = useState(false);
   const [activateError, setActivateError]   = useState("");
+  const [activateSent, setActivateSent]     = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [showWrong, setShowWrong] = useState(false);
   const [quiz, setQuiz] = useState(null); // { questions, idx, selected, answered, score, answers, timer }
@@ -343,12 +344,47 @@ export default function TradePrep() {
     })();
   }, []);
 
+  // Verify the signed-in Supabase session against Stripe; the server extracts
+  // the email from the session token, so ownership of the address is proven.
+  const verifySession = async () => {
+    if (!supabase) return { subscribed: false };
+    const { data } = await supabase.auth.getSession();
+    const supabaseToken = data?.session?.access_token;
+    if (!supabaseToken) return { subscribed: false };
+    const res = await fetch("/api/verify-subscription", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ supabaseToken }),
+    });
+    return res.json();
+  };
+
   // ─── Supabase auth + cross-device progress hydration ───
   useEffect(() => {
     if (!supabase) return;
     const hydrate = async (user) => {
       setAuthUser(user || null);
       if (!user) return;
+      // Signed in with no access token → check Stripe for a subscription under
+      // this (ownership-proven) email. Restores Pro on any device they sign into.
+      if (!localStorage.getItem("rsp_token")) {
+        const pending = localStorage.getItem("rsp_activate_pending");
+        localStorage.removeItem("rsp_activate_pending");
+        try {
+          const data = await verifySession();
+          if (data.subscribed && data.token) {
+            localStorage.setItem("rsp_token", data.token);
+            setSub(true);
+            setShowActivate(false);
+            setActivateSent(false);
+          } else if (pending) {
+            // They came back from an activation magic link but have no subscription
+            setActivateSent(false);
+            setShowActivate(true);
+            setActivateError(`No active subscription found for ${user.email}. Retry with the email used at checkout, or contact support@redsealprep.pro`);
+          }
+        } catch {}
+      }
       const cloud = await loadCloudProgress(user.id);
       if (cloud && Object.keys(cloud).length) {
         applyProgress(cloud);                       // pull their saved progress onto this device
@@ -380,23 +416,31 @@ export default function TradePrep() {
   const saveStats = async (s) => { try { localStorage.setItem("tp-stats", JSON.stringify(s)); } catch(e) {} };
 
   const activateSubscription = async () => {
-    if (!activateEmail.includes("@")) { setActivateError("Enter the email you used at checkout."); return; }
     setActivateLoading(true);
     setActivateError("");
     try {
-      const res = await fetch("/api/verify-subscription", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: activateEmail }),
-      });
-      const data = await res.json();
-      if (data.subscribed && data.token) {
-        localStorage.setItem("rsp_token", data.token);
-        setSub(true);
-        setShowActivate(false);
-      } else {
-        setActivateError("No active subscription found for that email. Check the email used at checkout, or contact support@redsealprep.pro");
+      // Already signed in — verify that email against Stripe directly
+      if (authUser && supabase) {
+        const data = await verifySession();
+        if (data.subscribed && data.token) {
+          localStorage.setItem("rsp_token", data.token);
+          setSub(true);
+          setShowActivate(false);
+        } else {
+          setActivateError(`No active subscription found for ${authUser.email}. Sign out and retry with the email used at checkout, or contact support@redsealprep.pro`);
+        }
+        return;
       }
+      // Not signed in — email them a magic link to prove they own the address
+      if (!activateEmail.includes("@")) { setActivateError("Enter the email you used at checkout."); return; }
+      if (!supabase) { setActivateError("Verification is temporarily unavailable — contact support@redsealprep.pro"); return; }
+      localStorage.setItem("rsp_activate_pending", "1");
+      const { error } = await supabase.auth.signInWithOtp({
+        email: activateEmail.trim().toLowerCase(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+      if (error) setActivateError(error.message);
+      else setActivateSent(true);
     } catch {
       setActivateError("Connection error. Please try again.");
     } finally {
@@ -717,42 +761,59 @@ export default function TradePrep() {
 
       {/* ACTIVATION MODAL */}
       {showActivate && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
-            <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>🎉</div>
-            <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Activate Your Pro Access</h2>
-            <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
-              Enter the email you used at checkout. We&apos;ll verify your subscription and unlock full access.
-            </p>
-            <input
-              type="email"
-              value={activateEmail}
-              onChange={e => { setActivateEmail(e.target.value); setActivateError(""); }}
-              onKeyDown={e => e.key === "Enter" && activateSubscription()}
-              placeholder="your@email.com"
-              autoFocus
-              style={{
-                width: "100%", background: T.surface,
-                border: `1px solid ${activateError ? T.red : T.border}`,
-                borderRadius: 10, padding: "14px 16px", color: T.text,
-                fontSize: 15, fontFamily: T.font, outline: "none",
-                boxSizing: "border-box", marginBottom: activateError ? 8 : 16,
-              }}
-            />
-            {activateError && (
-              <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{activateError}</p>
+        <div onClick={() => setShowActivate(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 20, padding: "36px 32px", maxWidth: 420, width: "100%" }}>
+            {activateSent ? (
+              <>
+                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>✉️</div>
+                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Check your email</h2>
+                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
+                  We sent a secure verification link to <b style={{ color: T.text }}>{activateEmail}</b>. Click it and your Pro access unlocks automatically — on whichever device you open it.
+                </p>
+                <button onClick={() => setShowActivate(false)} style={{ ...btn(true) }}>Done</button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>🎉</div>
+                <h2 style={{ textAlign: "center", fontSize: 22, fontWeight: 900, marginBottom: 8, letterSpacing: "-0.5px" }}>Activate Your Pro Access</h2>
+                <p style={{ textAlign: "center", color: T.text2, fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+                  {authUser
+                    ? <>You&apos;re signed in as <b style={{ color: T.text }}>{authUser.email}</b>. We&apos;ll check for a subscription under this email.</>
+                    : <>Enter the email you used at checkout. We&apos;ll send you a secure link to verify it&apos;s you and unlock full access.</>}
+                </p>
+                {!authUser && (
+                  <input
+                    type="email"
+                    value={activateEmail}
+                    onChange={e => { setActivateEmail(e.target.value); setActivateError(""); }}
+                    onKeyDown={e => e.key === "Enter" && activateSubscription()}
+                    placeholder="your@email.com"
+                    autoFocus
+                    style={{
+                      width: "100%", background: T.surface,
+                      border: `1px solid ${activateError ? T.red : T.border}`,
+                      borderRadius: 10, padding: "14px 16px", color: T.text,
+                      fontSize: 15, fontFamily: T.font, outline: "none",
+                      boxSizing: "border-box", marginBottom: activateError ? 8 : 16,
+                    }}
+                  />
+                )}
+                {activateError && (
+                  <p style={{ color: T.red, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>{activateError}</p>
+                )}
+                <button
+                  onClick={activateSubscription}
+                  disabled={activateLoading}
+                  style={{ ...btn(true), opacity: activateLoading ? 0.7 : 1 }}
+                >
+                  {activateLoading ? "Verifying..." : authUser ? "Verify My Subscription →" : "Email Me a Verification Link →"}
+                </button>
+                <p style={{ textAlign: "center", color: T.text2, fontSize: 12, marginTop: 16 }}>
+                  Issues? Email{" "}
+                  <a href="mailto:support@redsealprep.pro" style={{ color: T.accent }}>support@redsealprep.pro</a>
+                </p>
+              </>
             )}
-            <button
-              onClick={activateSubscription}
-              disabled={activateLoading}
-              style={{ ...btn(true), opacity: activateLoading ? 0.7 : 1 }}
-            >
-              {activateLoading ? "Verifying..." : "Activate Pro Access →"}
-            </button>
-            <p style={{ textAlign: "center", color: T.text2, fontSize: 12, marginTop: 16 }}>
-              Issues? Email{" "}
-              <a href="mailto:support@redsealprep.pro" style={{ color: T.accent }}>support@redsealprep.pro</a>
-            </p>
           </div>
         </div>
       )}
