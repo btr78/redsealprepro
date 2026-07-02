@@ -1,7 +1,7 @@
 import { TRADES_SEO } from "./trades-seo";
 
 export default function sitemap() {
-  const base = "https://redsealprep.pro";
+  const base = "https://www.redsealprep.pro";
   const now = new Date();
   return [
     { url: base, lastModified: now, changeFrequency: "weekly", priority: 1 },

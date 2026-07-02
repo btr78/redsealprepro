@@ -621,7 +621,7 @@ export default function TradePrep() {
             { icon: "⚡", title: "Daily Practice", desc: "20-question daily quizzes keep you sharp over months of prep" },
             { icon: "🎯", title: "Exam-Matched", desc: "Questions follow the exact Red Seal NOA breakdown" },
             { icon: "📱", title: "Works Everywhere", desc: "Phone, tablet, laptop — study on break, at home, anywhere" },
-            { icon: "🔧", title: "Multi-Trade", desc: "Millwright 433A live now. Electrician, plumber, and more coming" },
+            { icon: "🔧", title: "9 Trades Live", desc: "Millwright, Electrician, Plumber, Welder, Carpenter, Auto Tech & more — all included" },
           ].map(f => (
             <div key={f.title} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.radius, padding: 20 }}>
               <div style={{ fontSize: 28, marginBottom: 8 }}>{f.icon}</div>

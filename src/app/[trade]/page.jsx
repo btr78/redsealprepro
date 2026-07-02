@@ -13,7 +13,7 @@ export async function generateMetadata({ params }) {
   if (!t) return {};
   const title = `${t.name} (${t.code}) Red Seal Practice Exam — Free Practice Questions | RedSeal Prep Pro`;
   const description = `${t.intro} Try free practice questions for the ${t.code} Certificate of Qualification with an AI tutor that explains every answer.`;
-  const url = `https://redsealprep.pro/${t.slug}`;
+  const url = `https://www.redsealprep.pro/${t.slug}`;
   return {
     title, description,
     alternates: { canonical: url },
