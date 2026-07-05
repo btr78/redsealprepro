@@ -19,7 +19,7 @@ import { supabase, loadCloudProgress, saveCloudProgress, applyProgress } from ".
 
 // ─── TRADE DEFINITIONS ──────────────────────────────────────
 const TRADES = [
-  { id: "433A", name: "Industrial Mechanic (Millwright)", icon: "⚙️", questions: 135, active: true, color: "#ff6b35" },
+  { id: "433A", name: "Industrial Mechanic (Millwright)", icon: "⚙️", questions: 311, active: true, color: "#ff6b35" },
   { id: "309A", name: "Construction Electrician", icon: "⚡", questions: 135, active: true, color: "#3498db" },
   { id: "442A", name: "Industrial Electrician", icon: "🔌", questions: 135, active: true, color: "#9b59b6" },
   { id: "306A", name: "Plumber", icon: "🔧", questions: 135, active: true, color: "#1abc9c" },
