@@ -14,7 +14,7 @@ const jsonLd = {
       applicationCategory: "EducationalApplication",
       operatingSystem: "Web",
       description:
-        "Red Seal exam prep for 9 Canadian trades with 1,145+ practice questions, a timed exam simulator, and an AI tutor that explains every answer.",
+        "Red Seal exam prep for 9 Canadian trades with 1,320+ practice questions, a timed exam simulator, and an AI tutor that explains every answer.",
       url: "https://www.redsealprep.pro",
       offers: [
         { "@type": "Offer", name: "Free", price: "0", priceCurrency: "CAD" },

@@ -46,7 +46,7 @@ export default function Image() {
           Red Seal Practice Exams
         </div>
         <div style={{ display: "flex", fontSize: 38, color: "#9aa3b2", marginTop: 26 }}>
-          9 Trades · 1,145+ Questions · AI Tutor
+          9 Trades · 1,320+ Questions · AI Tutor
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 48 }}>
           {["Canada-wide", "Free to start", "Study on any device"].map((t) => (
