@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
-"""🤖 Bible SMS Bot — texts a daily KJV verse to a fixed list of phones via Twilio.
+"""🤖 Bible SMS Bot — texts a daily KJV verse to a fixed list of phones via
+free carrier email-to-SMS gateways (no paid SMS API).
 
 Runs once per day (LaunchAgent on the Mac, or cron/systemd timer on a droplet).
 Verses come from the local verses.json (no network needed to pick a verse);
 rotation is deterministic by calendar day so every run on the same date sends
 the same verse. Sends a Telegram alert to Bryan if any send fails.
 
+How it works: each recipient's phone number + carrier maps to an email
+address (e.g. 6045551234@msg.telus.com). Sending a plain email to that
+address gets relayed by the carrier as a real text message — free, but
+deliverability isn't guaranteed and depends on the carrier's gateway staying
+up (see CARRIER_GATEWAYS below).
+
 Usage:
-  bible_sms.py            send today's verse to everyone in recipients.json
-  bible_sms.py --dry-run  print what would be sent, send nothing
-  bible_sms.py --to +16045551234   send today's verse only to this number
+  bible_sms.py                     send today's verse to everyone in recipients.json
+  bible_sms.py --dry-run           print what would be sent, send nothing
+  bible_sms.py --to +16045551234 --carrier telus   send only to this number
 """
 
 import argparse
-import base64
 import datetime
 import json
 import os
+import re
+import smtplib
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
+from email.mime.text import MIMEText
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSES_FILE = os.path.join(SCRIPT_DIR, "verses.json")
@@ -29,6 +37,30 @@ RECIPIENTS_FILE = os.path.join(SCRIPT_DIR, "recipients.json")
 ENV_FILE = os.path.join(SCRIPT_DIR, ".env")
 
 MAX_RETRIES = 3
+
+# Email-to-SMS gateway domains. These are run by the carriers themselves, not
+# us — they occasionally change or get shut down. If a recipient stops
+# getting texts, the first thing to check is whether their carrier's gateway
+# is still listed here / still working (search "<carrier> email to sms
+# gateway 2026" to confirm before assuming the bot is broken).
+CARRIER_GATEWAYS = {
+    # Canada
+    "telus": "msg.telus.com",
+    "koodo": "msg.koodomobile.com",
+    "rogers": "pcs.rogers.com",
+    "fido": "fido.ca",
+    "bell": "txt.bell.ca",
+    "virgin_ca": "vmobl.com",
+    "freedom": "txt.freedommobile.ca",
+    "public_mobile": "msg.telus.com",
+    # United States
+    "att": "txt.att.net",
+    "verizon": "vtext.com",
+    "tmobile": "tmomail.net",
+    "sprint": "messaging.sprintpcs.com",
+    "google_fi": "msg.fi.google.com",
+    "uscellular": "email.uscc.net",
+}
 
 
 def log(msg):
@@ -61,6 +93,20 @@ def build_message(verse):
     return f"\U0001F4D6 Daily Verse\n\n“{verse['text']}”\n\n— {verse['ref']} (KJV)"
 
 
+def to_gateway_address(number, carrier):
+    """Turn (+16045551234, 'telus') into 6045551234@msg.telus.com."""
+    domain = CARRIER_GATEWAYS.get(carrier)
+    if not domain:
+        known = ", ".join(sorted(CARRIER_GATEWAYS))
+        raise RuntimeError(f"unknown carrier '{carrier}' — known carriers: {known}")
+    digits = re.sub(r"\D", "", number)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]  # strip NANP country code
+    if len(digits) != 10:
+        raise RuntimeError(f"'{number}' isn't a 10-digit NANP number after stripping +1")
+    return f"{digits}@{domain}"
+
+
 def load_recipients():
     if not os.path.exists(RECIPIENTS_FILE):
         raise RuntimeError(
@@ -68,41 +114,47 @@ def load_recipients():
         )
     with open(RECIPIENTS_FILE) as f:
         recipients = json.load(f)
-    valid = [r for r in recipients if r.get("number", "").startswith("+")]
-    if len(valid) != len(recipients):
-        raise RuntimeError("every recipient number must be E.164 format, e.g. +16045551234")
-    return valid
+    for r in recipients:
+        if not r.get("number", "").startswith("+"):
+            raise RuntimeError("every recipient number must be E.164 format, e.g. +16045551234")
+        if not r.get("carrier"):
+            raise RuntimeError(
+                f"recipient {r.get('name', '?')} is missing 'carrier' "
+                f"(one of: {', '.join(sorted(CARRIER_GATEWAYS))})"
+            )
+    return recipients
 
 
-def send_sms(to_number, body):
-    """Send one SMS through Twilio's REST API with progressive-backoff retries."""
-    sid = os.environ["TWILIO_ACCOUNT_SID"]
-    token = os.environ["TWILIO_AUTH_TOKEN"]
-    from_number = os.environ["TWILIO_FROM_NUMBER"]
+def send_sms(to_number, carrier, body):
+    """Send one text via the carrier's email-to-SMS gateway, with retries."""
+    to_addr = to_gateway_address(to_number, carrier)
+    from_addr = os.environ["SMTP_EMAIL"]
+    password = os.environ["SMTP_APP_PASSWORD"]
+    host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    port = int(os.environ.get("SMTP_PORT", "465"))
 
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    data = urllib.parse.urlencode({"To": to_number, "From": from_number, "Body": body}).encode()
-    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+    msg = MIMEText(body, _charset="utf-8")
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    # Deliberately no Subject: some carrier gateways prepend it to the text
+    # body, which would show up twice.
 
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
-        req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {auth}"})
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode())
-            return result.get("sid", "?")
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")[:300]
-            last_error = f"HTTP {e.code}: {detail}"
-            # 4xx (bad number, bad credentials) won't succeed on retry
-            if 400 <= e.code < 500:
-                break
+            with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+                server.login(from_addr, password)
+                server.sendmail(from_addr, [to_addr], msg.as_string())
+            return to_addr
+        except smtplib.SMTPRecipientsRefused as e:
+            # carrier gateway rejected the address outright — retrying won't help
+            raise RuntimeError(f"gateway refused {to_addr}: {e}") from e
         except Exception as e:
             last_error = str(e)
         wait = 5 * 2 ** (attempt - 1)
-        log(f"  attempt {attempt} to {to_number} failed ({last_error}), retrying in {wait}s")
+        log(f"  attempt {attempt} to {to_addr} failed ({last_error}), retrying in {wait}s")
         time.sleep(wait)
-    raise RuntimeError(f"giving up on {to_number}: {last_error}")
+    raise RuntimeError(f"giving up on {to_addr}: {last_error}")
 
 
 def telegram_alert(text):
@@ -123,6 +175,7 @@ def main():
     parser = argparse.ArgumentParser(description="🤖 Bible SMS Bot")
     parser.add_argument("--dry-run", action="store_true", help="print the message, send nothing")
     parser.add_argument("--to", help="send only to this E.164 number instead of recipients.json")
+    parser.add_argument("--carrier", help="carrier for --to, e.g. telus, rogers, att, verizon")
     args = parser.parse_args()
 
     load_env()
@@ -131,7 +184,9 @@ def main():
     log(f"today's verse: {verse['ref']}")
 
     if args.to:
-        recipients = [{"name": "override", "number": args.to}]
+        if not args.carrier:
+            raise RuntimeError("--to requires --carrier too")
+        recipients = [{"name": "override", "number": args.to, "carrier": args.carrier}]
     else:
         recipients = load_recipients()
 
@@ -140,23 +195,23 @@ def main():
         print(message)
         print("----- recipients -----")
         for r in recipients:
-            print(f"  {r.get('name', '?')}: {r['number']}")
+            addr = to_gateway_address(r["number"], r["carrier"])
+            print(f"  {r.get('name', '?')}: {r['number']} -> {addr}")
         return
 
-    missing = [k for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
-               if not os.environ.get(k)]
+    missing = [k for k in ("SMTP_EMAIL", "SMTP_APP_PASSWORD") if not os.environ.get(k)]
     if missing:
         raise RuntimeError(f"missing in .env: {', '.join(missing)}")
 
     failures = []
     for r in recipients:
         try:
-            sid = send_sms(r["number"], message)
-            log(f"sent to {r.get('name', '?')} ({r['number']}) sid={sid}")
+            addr = send_sms(r["number"], r["carrier"], message)
+            log(f"sent to {r.get('name', '?')} ({r['number']}) via {addr}")
         except Exception as e:
             log(f"FAILED for {r.get('name', '?')} ({r['number']}): {e}")
             failures.append(f"{r.get('name', '?')} ({r['number']}): {e}")
-        time.sleep(1)  # stay well under Twilio's 1 msg/sec long-code limit
+        time.sleep(1)  # be polite to the SMTP server between sends
 
     if failures:
         telegram_alert("🤖 Bible SMS Bot — send failures today:\n" + "\n".join(failures))
