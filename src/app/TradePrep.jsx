@@ -1,15 +1,10 @@
 "use client";
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef } from "react";
-import { QUESTIONS_433A, CATEGORIES_433A } from "./questions433A";
-import { QUESTIONS_309A, CATEGORIES_309A } from "./questions309A";
-import { QUESTIONS_442A, CATEGORIES_442A } from "./questions442A";
-import { QUESTIONS_306A, CATEGORIES_306A } from "./questions306A";
-import { QUESTIONS_430A, CATEGORIES_430A } from "./questions430A";
-import { QUESTIONS_307A, CATEGORIES_307A } from "./questions307A";
-import { QUESTIONS_403A, CATEGORIES_403A } from "./questions403A";
-import { QUESTIONS_310S, CATEGORIES_310S } from "./questions310S";
-import { QUESTIONS_456A, CATEGORIES_456A } from "./questions456A";
+// Question banks are NO LONGER imported here — that shipped all 1,320+ Q&A to
+// every browser. Questions now come per-session from the gated /api/questions
+// route. Only category metadata (non-secret) is imported for the dashboard.
+import { CATEGORIES_BY_TRADE } from "./tradeCategories";
 import { supabase, loadCloudProgress, saveCloudProgress, applyProgress } from "./supabaseClient";
 
 // ═══════════════════════════════════════════════════════════════
@@ -65,6 +60,7 @@ export default function TradePrep() {
     return !!localStorage.getItem("rsp_token");
   });
   const [trade, setTrade] = useState(null);
+  const [quizLoading, setQuizLoading] = useState(false);
   const [showActivate, setShowActivate]     = useState(false);
   const [activateEmail, setActivateEmail]   = useState("");
   const [activateLoading, setActivateLoading] = useState(false);
@@ -119,7 +115,6 @@ export default function TradePrep() {
     setWrongBank(bank);
   };
   const getWeakCats = () => {
-    const allQs = getQuestions();
     const cats = getCategories();
     const key = "rsp_catperf_" + (trade?.id || "");
     try { 
@@ -334,66 +329,48 @@ export default function TradePrep() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.messages]);
 
   // ─── TRADE-AWARE HELPERS ────────────────────────────────────
-  const getQuestions = () => {
-    if (trade?.id === "309A") return QUESTIONS_309A;
-    if (trade?.id === "442A") return QUESTIONS_442A;
-    if (trade?.id === "306A") return QUESTIONS_306A;
-    if (trade?.id === "430A") return QUESTIONS_430A;
-    if (trade?.id === "307A") return QUESTIONS_307A;
-    if (trade?.id === "403A") return QUESTIONS_403A;
-    if (trade?.id === "310S") return QUESTIONS_310S;
-    if (trade?.id === "456A") return QUESTIONS_456A;
-    return QUESTIONS_433A;
-  };
-  const getCategories = () => {
-    if (trade?.id === "309A") return CATEGORIES_309A;
-    if (trade?.id === "442A") return CATEGORIES_442A;
-    if (trade?.id === "306A") return CATEGORIES_306A;
-    if (trade?.id === "430A") return CATEGORIES_430A;
-    if (trade?.id === "307A") return CATEGORIES_307A;
-    if (trade?.id === "403A") return CATEGORIES_403A;
-    if (trade?.id === "310S") return CATEGORIES_310S;
-    if (trade?.id === "456A") return CATEGORIES_456A;
-    return CATEGORIES_433A;
+  const getCategories = () => CATEGORIES_BY_TRADE[trade?.id] || CATEGORIES_BY_TRADE["433A"];
+
+  // Fetch this session's questions from the gated API. Anonymous/unpaid callers
+  // receive only the public sample pool; a valid paid token gets the full,
+  // mode-selected set. Replaces the old client-side question bank.
+  const fetchSessionQuestions = async ({ mode, cat, ids }) => {
+    let token = null;
+    try { token = localStorage.getItem("rsp_token"); } catch {}
+    const res = await fetch("/api/questions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trade: trade?.id || "433A", mode, cat, ids,
+        examCount: trade?.questions || 120, token,
+      }),
+    });
+    if (!res.ok) throw new Error("load-failed");
+    const data = await res.json();
+    return Array.isArray(data.questions) ? data.questions : [];
   };
 
   // ─── QUIZ LOGIC ───────────────────────────────────────────
-  const startQuiz = (mode, cat) => {
-    const allQs = getQuestions();
-    let qs = allQs;
-    let countdown = 0;
+  const startQuiz = async (mode, cat) => {
+    if (quizLoading) return; // guard against double-taps while a fetch is in flight
+    let ids = null;
+    let selCat = cat;
 
-    if (mode === "cat") qs = qs.filter(q => q.cat === cat);
-    else if (mode === "daily") qs = shuffle(qs).slice(0, 20);
-    else if (mode === "hard") qs = shuffle(qs.filter(q => q.type === "critical")).slice(0, 20);
-    else if (mode === "exam") {
-      // Real exam simulator: exact question count per trade, 4hr timer
-      const examCount = trade?.questions || 120;
-      qs = shuffle(allQs).slice(0, Math.min(examCount, allQs.length));
-      countdown = 4 * 60 * 60; // 4 hours in seconds
-    }
-    else if (mode === "review") {
-      // Spaced repetition: pull questions from wrong bank
+    // Modes that depend on client-side state (computed before hitting the API)
+    if (mode === "review") {
       const bank = JSON.parse(localStorage.getItem("rsp_wrong_" + (trade?.id || "")) || "{}");
-      const wrongIds = Object.keys(bank).map(Number);
-      qs = allQs.filter(q => wrongIds.includes(q.id));
-      if (qs.length === 0) { alert("No wrong answers to review! Keep practicing."); return; }
-      qs = shuffle(qs).slice(0, Math.min(30, qs.length));
+      ids = Object.keys(bank).map(Number);
+      if (ids.length === 0) { alert("No wrong answers to review! Keep practicing."); return; }
     }
-    else if (mode === "weak") {
-      // Weakest category drill
+    if (mode === "weak") {
       const weak = getWeakCats();
       if (weak.length === 0) { alert("Complete some sessions first to identify weak spots."); return; }
-      const weakestCat = weak[0].id;
-      qs = shuffle(allQs.filter(q => q.cat === weakestCat)).slice(0, 20);
-    }
-    else qs = shuffle(qs);
-
-    if (!sub && !["daily"].includes(mode)) {
-      qs = shuffle(allQs).slice(0, 20);
+      selCat = weak[0].id; // weakest category
     }
 
-    // Free tier: one 20-question session per day (any trade), as advertised
+    // Free tier: one 20-question session per day (any trade), as advertised.
+    // Real enforcement is server-side (free tokens only ever receive the sample
+    // pool); this preserves the identical "come back tomorrow" funnel message.
     if (!sub) {
       const today = new Date().toISOString().slice(0, 10);
       if (localStorage.getItem("rsp_free_day") === today) {
@@ -401,9 +378,33 @@ export default function TradePrep() {
         setPage("landing");
         return;
       }
-      try { localStorage.setItem("rsp_free_day", today); } catch {}
     }
 
+    // Pull this session's questions from the gated API
+    let qs = [];
+    setQuizLoading(true);
+    try {
+      qs = await fetchSessionQuestions({ mode, cat: selCat, ids });
+    } catch {
+      setQuizLoading(false);
+      alert("Couldn't load questions — check your connection and try again.");
+      return;
+    }
+    setQuizLoading(false);
+
+    if (!qs.length) {
+      alert(mode === "review"
+        ? "No wrong answers to review! Keep practicing."
+        : "Couldn't load questions — please try again.");
+      return;
+    }
+
+    // Only consume the free daily allowance once we actually have a session
+    if (!sub) {
+      try { localStorage.setItem("rsp_free_day", new Date().toISOString().slice(0, 10)); } catch {}
+    }
+
+    const countdown = mode === "exam" ? 4 * 60 * 60 : 0; // 4hr exam timer
     updateStreak();
     setQuiz({ questions: shuffle(qs).map(shuffleOpts), idx: 0, selected: null, answered: false, score: 0, answers: [], timer: 0, running: true, mode, countdown });
     setPage("quiz");
@@ -520,6 +521,16 @@ export default function TradePrep() {
           </>
         )}
       </div>
+    </div>
+  );
+
+  // Brief loading state while this session's questions are fetched from the
+  // gated API (questions are no longer bundled client-side).
+  if (quizLoading) return (
+    <div style={{ fontFamily: T.font, background: T.bg, minHeight: "100vh", color: T.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+      <div style={{ width: 44, height: 44, border: `3px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "rsp-spin 0.8s linear infinite" }} />
+      <div style={{ color: T.text2, fontSize: 14 }}>Loading your questions…</div>
+      <style>{"@keyframes rsp-spin{to{transform:rotate(360deg)}}"}</style>
     </div>
   );
 
@@ -1073,7 +1084,9 @@ export default function TradePrep() {
           </button>
 
           {showWrong && quiz.answers.filter(a => !a.ok).map((a, i) => {
-            const q = getQuestions().find(q => q.id === a.qId);
+            // Use the session's questions (option order matches what the user saw,
+            // so a.sel lines up); the client no longer holds the full bank.
+            const q = quiz.questions.find(q => q.id === a.qId);
             if (!q) return null;
             return (
               <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 8 }}>
