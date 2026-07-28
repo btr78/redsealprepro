@@ -39,25 +39,24 @@ ENV_FILE = os.path.join(SCRIPT_DIR, ".env")
 MAX_RETRIES = 3
 
 # Email-to-SMS gateway domains. These are run by the carriers themselves, not
-# us — they occasionally change or get shut down. If a recipient stops
-# getting texts, the first thing to check is whether their carrier's gateway
-# is still listed here / still working (search "<carrier> email to sms
-# gateway 2026" to confirm before assuming the bot is broken).
+# us — most North American carriers have been SHUTTING THESE DOWN industry-wide
+# since ~2023 because spammers abused them for smishing. Confirmed dead as of
+# 2026-07-28 (DNS has no working mail server, verified by us): Rogers (killed
+# 2023, also took down Fido/Freedom/Chatr since they're Rogers-owned), Bell
+# (killed 2025-12-31), Sprint (merged into T-Mobile, gateway gone), AT&T
+# (winding down, no MX left). These entries are DELETED below rather than kept
+# — do not re-add them without re-verifying DNS first (`dig MX <domain>`).
+# If a recipient on a *surviving* carrier stops getting texts, check that
+# carrier's gateway is still up before assuming the bot itself is broken.
 CARRIER_GATEWAYS = {
-    # Canada
+    # Canada — confirmed live MX as of 2026-07-28
     "telus": "msg.telus.com",
     "koodo": "msg.koodomobile.com",
-    "rogers": "pcs.rogers.com",
-    "fido": "fido.ca",
-    "bell": "txt.bell.ca",
-    "virgin_ca": "vmobl.com",
-    "freedom": "txt.freedommobile.ca",
     "public_mobile": "msg.telus.com",
-    # United States
-    "att": "txt.att.net",
+    "virgin_ca": "vmobl.com",
+    # United States — confirmed live MX as of 2026-07-28
     "verizon": "vtext.com",
     "tmobile": "tmomail.net",
-    "sprint": "messaging.sprintpcs.com",
     "google_fi": "msg.fi.google.com",
     "uscellular": "email.uscc.net",
 }
