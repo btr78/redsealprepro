@@ -10,11 +10,13 @@ once a day at 8:00 AM from the Mac via LaunchAgent.
   all verses, no repeats within a cycle).
 - Recipients: `recipients.json` (gitignored) — edit anytime, E.164 numbers
   plus each person's carrier. **Only works for carriers whose gateway is
-  still alive** — as of 2026-07-28 that's Telus/Koodo/Public Mobile/Virgin
-  Mobile (Canada) and Verizon/T-Mobile/Google Fi/US Cellular (US). Rogers,
-  Fido, Freedom, Chatr, Bell, Sprint, and AT&T have all permanently shut
-  their gateways down (see `CARRIER_GATEWAYS` in `bible_sms.py`) — there is
-  no workaround for recipients on those carriers short of a paid SMS API.
+  still alive** — as of 2026-07-28 that's Telus/Koodo/Public Mobile (Canada)
+  and Verizon/T-Mobile/Google Fi/US Cellular (US). Rogers, Fido, Freedom,
+  Chatr, Bell, Virgin Mobile Canada, Sprint, and AT&T have all permanently
+  shut their gateways down (see `CARRIER_GATEWAYS` in `bible_sms.py`) — there
+  is no workaround for recipients on those carriers short of a paid SMS API.
+  In Canada that leaves only the Telus family — most other carriers here are
+  dead ends.
 - Delivery: sends a plain email to `<10-digit-number>@<carrier-gateway>`
   (e.g. `6045551234@msg.telus.com`) — the carrier relays it as a real text.
   Free, but not guaranteed: carriers can filter or rate-limit these

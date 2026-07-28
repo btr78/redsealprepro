@@ -43,9 +43,14 @@ MAX_RETRIES = 3
 # since ~2023 because spammers abused them for smishing. Confirmed dead as of
 # 2026-07-28 (DNS has no working mail server, verified by us): Rogers (killed
 # 2023, also took down Fido/Freedom/Chatr since they're Rogers-owned), Bell
-# (killed 2025-12-31), Sprint (merged into T-Mobile, gateway gone), AT&T
-# (winding down, no MX left). These entries are DELETED below rather than kept
-# — do not re-add them without re-verifying DNS first (`dig MX <domain>`).
+# (killed 2025-12-31, also took down Virgin Mobile Canada since it's a
+# Bell-owned brand — neither txt.virginplus.ca nor vmobile.ca has an MX
+# record), Sprint (merged into T-Mobile, gateway gone), AT&T (winding down,
+# no MX left). NOTE: "vmobl.com" is Virgin Mobile USA's old domain, NOT
+# Virgin Mobile Canada's — that mixup caused a silent misfire on 2026-07-28
+# (mail was accepted by the wrong, defunct-but-still-resolving US domain and
+# vanished). These entries are DELETED below rather than kept — do not
+# re-add them without re-verifying DNS first (`dig MX <domain>`).
 # If a recipient on a *surviving* carrier stops getting texts, check that
 # carrier's gateway is still up before assuming the bot itself is broken.
 CARRIER_GATEWAYS = {
@@ -53,7 +58,6 @@ CARRIER_GATEWAYS = {
     "telus": "msg.telus.com",
     "koodo": "msg.koodomobile.com",
     "public_mobile": "msg.telus.com",
-    "virgin_ca": "vmobl.com",
     # United States — confirmed live MX as of 2026-07-28
     "verizon": "vtext.com",
     "tmobile": "tmomail.net",
